@@ -32,6 +32,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "Be concise, technical, and action-oriented."
 )
 DB_PATH = "mutiny.db"
+SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "mutiny_scheduler.db")
 ALLOWED_MODELS = {
     "ollama/qwen2.5-coder:7b",
     "ollama/phi4-mini",

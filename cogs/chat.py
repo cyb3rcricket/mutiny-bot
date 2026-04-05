@@ -124,8 +124,8 @@ class ChatCog(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
         """Listen for incoming messages while avoiding self-replies."""
-        # Ignore messages from this bot to prevent response loops.
-        if message.author == self.bot.user:
+        # Ignore all bot authors to prevent bot-to-bot loops.
+        if message.author.bot:
             return
 
         bucket = self._rate_limiter.get_bucket(message)
@@ -173,7 +173,7 @@ class ChatCog(commands.Cog):
                 context_tokens = set_tool_request_context(
                     user_id=user_id,
                     is_admin=self._is_admin_user(message),
-                    scheduler=getattr(self.bot, "scheduler", None),
+                    scheduler=self.bot.scheduler_manager.scheduler,
                 )
                 try:
                     async with self._llm_semaphore:
@@ -219,7 +219,7 @@ class ChatCog(commands.Cog):
                         else:
                             await response_msg.edit(content=(response_msg.content or "") + chunk)
                         await asyncio.sleep(0.08)   # tiny pause between edits for smoothness
-        except Exception as error:
+        except Exception:
             logger.exception("AI message handling failed")
             await message.channel.send(
                 "Sorry, I hit an AI error and could not respond right now. Please try again shortly."

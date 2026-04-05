@@ -10,6 +10,7 @@ from config import ALLOWED_MODELS
 
 
 MAX_PERSONALITY_SNIPPET_CHARS = 300
+MAX_SYSTEM_PROMPT_CHARS = 10_000
 
 
 class AdminCog(commands.Cog):
@@ -79,6 +80,13 @@ class AdminCog(commands.Cog):
         if not cleaned_prompt:
             await interaction.response.send_message(
                 "Prompt cannot be empty.", ephemeral=True
+            )
+            return
+
+        if len(cleaned_prompt) > MAX_SYSTEM_PROMPT_CHARS:
+            await interaction.response.send_message(
+                f"Prompt is too long. Maximum length is {MAX_SYSTEM_PROMPT_CHARS} characters.",
+                ephemeral=True,
             )
             return
 

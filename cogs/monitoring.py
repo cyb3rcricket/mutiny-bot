@@ -36,10 +36,25 @@ class MonitoringCog(commands.Cog):
             return False
         return True
 
+    async def _reject_unavailable(self, interaction: discord.Interaction) -> None:
+        """Return a generic unavailable response without leaking policy details."""
+        await interaction.response.send_message(
+            "This command is unavailable in the current context.",
+            ephemeral=True,
+        )
+
     @app_commands.command(name="jobs", description="List active scheduled jobs")
+    @app_commands.default_permissions(manage_guild=True)
     async def jobs(self, interaction: discord.Interaction) -> None:
         if not self._check_channel(interaction):
-            await interaction.response.send_message("This command can only be used in the monitoring channel.", ephemeral=True)
+            await self._reject_unavailable(interaction)
+            return
+
+        if not self._has_admin_permissions(interaction):
+            await interaction.response.send_message(
+                "You need Manage Server or Administrator permission to view jobs.",
+                ephemeral=True,
+            )
             return
 
         await interaction.response.defer()
@@ -63,7 +78,7 @@ class MonitoringCog(commands.Cog):
     @app_commands.default_permissions(manage_guild=True)
     async def history(self, interaction: discord.Interaction) -> None:
         if not self._check_channel(interaction):
-            await interaction.response.send_message("This command can only be used in the monitoring channel.", ephemeral=True)
+            await self._reject_unavailable(interaction)
             return
 
         if not self._has_admin_permissions(interaction):
@@ -100,9 +115,17 @@ class MonitoringCog(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="botstatus", description="Show system status and job counts ⚙️ (botstatus)")
+    @app_commands.default_permissions(manage_guild=True)
     async def botstatus(self, interaction: discord.Interaction) -> None:
         if not self._check_channel(interaction):
-            await interaction.response.send_message("This command can only be used in the monitoring channel.", ephemeral=True)
+            await self._reject_unavailable(interaction)
+            return
+
+        if not self._has_admin_permissions(interaction):
+            await interaction.response.send_message(
+                "You need Manage Server or Administrator permission to view bot status.",
+                ephemeral=True,
+            )
             return
 
         await interaction.response.defer()

@@ -2,11 +2,12 @@
 
 import asyncio
 import os
+import threading
 from typing import Optional
 
 import aiosqlite
 
-from config import ALLOWED_MODELS, BROADCAST_CHANNEL_ID, DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
+from config import ALLOWED_MODELS, DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
 
 
 MAX_STORED_CONTENT_CHARS = 8000
@@ -21,11 +22,14 @@ class DatabaseManager:
         self.bot = bot
         self._db: Optional[aiosqlite.Connection] = None
         self._db_lock: Optional[asyncio.Lock] = None
+        self._db_lock_guard = threading.Lock()
 
     async def _get_lock(self) -> asyncio.Lock:
         """Get or create the DB lifecycle lock in an active event loop."""
         if self._db_lock is None:
-            self._db_lock = asyncio.Lock()
+            with self._db_lock_guard:
+                if self._db_lock is None:
+                    self._db_lock = asyncio.Lock()
         return self._db_lock
 
     async def _ensure_connection(self) -> aiosqlite.Connection:
@@ -173,6 +177,10 @@ class DatabaseManager:
 
     async def get_recent_history(self, user_id: str, limit: int = 10) -> list[dict[str, str]]:
         """Read the most recent messages for a user in chronological order."""
+        normalized_user_id = str(user_id or "").strip()
+        if not normalized_user_id:
+            return []
+
         db = await self._get_db()
         cursor = await db.execute(
             """
@@ -186,7 +194,7 @@ class DatabaseManager:
             )
             ORDER BY timestamp ASC, rowid ASC
             """,
-            (user_id, limit),
+            (normalized_user_id, limit),
         )
         rows = await cursor.fetchall()
 
@@ -220,7 +228,11 @@ class DatabaseManager:
         ordered chronologically (oldest first) within the returned window.
         """
         db = await self._get_db()
-        if user_id:
+        if user_id is not None:
+            normalized_user_id = str(user_id).strip()
+            if not normalized_user_id:
+                return []
+
             cursor = await db.execute(
                 """
                 SELECT role, content
@@ -233,7 +245,7 @@ class DatabaseManager:
                 )
                 ORDER BY timestamp ASC, rowid ASC
                 """,
-                (user_id, limit),
+                (normalized_user_id, limit),
             )
         else:
             cursor = await db.execute(

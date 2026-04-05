@@ -13,7 +13,7 @@ Mutiny Bot is a Discord bot built with `discord.py` that uses local Ollama model
 
 ## Requirements
 
-- Python 3.10 or newer
+- Python 3.9 or newer
 - A Discord bot application and token
 - A running local Ollama server
 - At least one allowed Ollama model pulled locally
@@ -39,9 +39,11 @@ pip install -r requirements.txt
 DISCORD_BOT_TOKEN=your_discord_bot_token
 BROADCAST_CHANNEL_ID=0
 OLLAMA_API_BASE=http://127.0.0.1:11434
+SCHEDULER_DB_PATH=mutiny_scheduler.db
 ```
 
 `BROADCAST_CHANNEL_ID` is optional, but required if you want the scheduler to post automated results into a Discord channel.
+`SCHEDULER_DB_PATH` is optional and defaults to `mutiny_scheduler.db`.
 
 4. Start Ollama locally and make sure one of the allowed models exists:
 
@@ -65,6 +67,15 @@ python mutiny_bot.py
 ```
 
 The bot will create or update its local SQLite database on first launch, sync slash commands, and connect to Discord with the token from `.env`.
+
+## Tests
+
+Run the built-in unit tests from the repository root:
+
+```bash
+source .venv/bin/activate
+python -m unittest discover -s tests -v
+```
 
 ## Commands
 

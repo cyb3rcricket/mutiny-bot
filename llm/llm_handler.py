@@ -1,5 +1,6 @@
 """LLM handler for MutinyBot using litellm and Ollama."""
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -11,6 +12,8 @@ from config import MAX_HISTORY_MESSAGES
 
 
 MAX_TAIL_MESSAGES = 8
+MAX_TOOL_RESULT_CHARS = 4000
+TOOL_RESULT_TRUNCATION_SUFFIX = " [truncated]"
 logger = logging.getLogger("mutiny_bot.llm")
 
 
@@ -75,7 +78,11 @@ class LLMHandler:
 
                 completion_kwargs["messages"] = messages
 
-        response = await litellm.acompletion(**completion_kwargs)
+        try:
+            response = await litellm.acompletion(**completion_kwargs)
+        except Exception:
+            logger.exception("Primary LLM completion failed")
+            return "I could not reach the local AI model right now. Please try again shortly."
 
         ai_message = self._extract_first_message(response)
         if ai_message is None:
@@ -129,24 +136,38 @@ class LLMHandler:
                 else:
                     try:
                         maybe_result = tool_function(**parsed_arguments)
-                        result = await maybe_result if isawaitable(maybe_result) else maybe_result
+                        if isawaitable(maybe_result):
+                            result = await asyncio.wait_for(maybe_result, timeout=30.0)
+                        else:
+                            result = maybe_result
+                    except asyncio.TimeoutError:
+                        result = f"Tool execution timed out: {tool_name}"
                     except Exception as tool_error:
                         result = f"Tool execution failed: {tool_error}"
+
+                tool_result_text = str(result)
+                if len(tool_result_text) > MAX_TOOL_RESULT_CHARS:
+                    max_prefix_len = MAX_TOOL_RESULT_CHARS - len(TOOL_RESULT_TRUNCATION_SUFFIX)
+                    tool_result_text = f"{tool_result_text[:max_prefix_len]}{TOOL_RESULT_TRUNCATION_SUFFIX}"
 
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "name": tool_name,
-                        "content": str(result),
+                        "content": tool_result_text,
                     }
                 )
 
-            final_response = await litellm.acompletion(
-                model=model,
-                api_base=self.api_base,
-                messages=messages,
-            )
+            try:
+                final_response = await litellm.acompletion(
+                    model=model,
+                    api_base=self.api_base,
+                    messages=messages,
+                )
+            except Exception:
+                logger.exception("Final LLM completion failed after tool calls")
+                return "I ran the tool request but could not complete the final AI response."
             ai_message = self._extract_first_message(final_response)
             if ai_message is None:
                 return ""
@@ -178,7 +199,16 @@ class LLMHandler:
             {"role": "user", "content": "Summarize the conversation above in one short sentence."},
         ]
 
-        response = await litellm.acompletion(model=model, messages=messages, api_base=self.api_base, stream=False)
+        try:
+            response = await litellm.acompletion(
+                model=model,
+                messages=messages,
+                api_base=self.api_base,
+                stream=False,
+            )
+        except Exception:
+            logger.exception("History summarization completion failed")
+            return ""
         ai_message = self._extract_first_message(response)
         if ai_message is None:
             return ""

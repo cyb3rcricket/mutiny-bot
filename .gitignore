@@ -1,5 +1,7 @@
 .env
 mutiny.db
+mutiny_scheduler.db
+mutiny_scheduler.db-journal
 
 # macOS
 .DS_Store

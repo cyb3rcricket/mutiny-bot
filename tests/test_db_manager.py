@@ -35,6 +35,16 @@ class DatabaseManagerAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(stored), MAX_STORED_CONTENT_CHARS)
         self.assertTrue(stored.endswith(TRUNCATION_SUFFIX))
 
+    async def test_get_recent_history_empty_user_id_returns_empty(self) -> None:
+        await self.db_manager.insert_history_message("u1", "user", "hello")
+        history = await self.db_manager.get_recent_history("", limit=10)
+        self.assertEqual(history, [])
+
+    async def test_get_chat_history_blank_user_id_returns_empty(self) -> None:
+        await self.db_manager.insert_history_message("u1", "user", "hello")
+        history = await self.db_manager.get_chat_history(user_id="   ", limit=10)
+        self.assertEqual(history, [])
+
 
 class DatabaseManagerFormatSizeTests(unittest.TestCase):
     """Tests for db size formatter helper."""

@@ -3,9 +3,12 @@
 from contextvars import ContextVar, Token
 from datetime import datetime
 from inspect import isawaitable
+import logging
+import re
 from typing import Any, Optional, Tuple, cast
 
 import aiosqlite
+from apscheduler.jobstores.base import JobLookupError
 
 from config import AUTOMATION_TIMEZONE, BROADCAST_CHANNEL_ID, DB_PATH
 from tools.registry import AVAILABLE_TOOLS, ai_tool
@@ -13,6 +16,7 @@ from tools.registry import AVAILABLE_TOOLS, ai_tool
 CURRENT_TOOL_USER_ID: ContextVar[Optional[str]] = ContextVar("current_tool_user_id", default=None)
 CURRENT_TOOL_IS_ADMIN: ContextVar[bool] = ContextVar("current_tool_is_admin", default=False)
 CURRENT_TOOL_SCHEDULER: ContextVar[Any] = ContextVar("current_tool_scheduler", default=None)
+logger = logging.getLogger("mutiny_bot.tools.scheduler")
 
 
 def setup(bot: Any) -> None:
@@ -52,6 +56,7 @@ def _get_scheduler_from_context() -> Tuple[Optional[Any], Optional[str]]:
     """Return scheduler from request context or an authorization-style error."""
     scheduler = CURRENT_TOOL_SCHEDULER.get()
     if scheduler is None:
+        logger.warning("Scheduler context unavailable during automation tool call")
         return None, "Error: Scheduler context is unavailable for this request."
     return scheduler, None
 
@@ -88,8 +93,9 @@ async def execute_and_broadcast(tool_name: str) -> str:
 
         await _enqueue_broadcast(f"🤖 **AUTOMATED TASK: {tool_name}**\n\n{result_text}")
         return f"Successfully executed and queued broadcast for '{tool_name}'."
-    except Exception as e:
-        return f"Error executing tool: {e}"
+    except Exception:
+        logger.exception("Automation execution failed for tool %s", tool_name)
+        return "Error executing automation. Check logs for details."
 
 
 @ai_tool(
@@ -150,8 +156,14 @@ async def schedule_daily_automation(tool_name: str, hour: int, minute: int) -> s
             f"✅ Scheduled '{tool_name}' to run daily at {hour:02d}:{minute:02d} "
             f"{AUTOMATION_TIMEZONE} time. Job ID: {job_id}"
         )
-    except Exception as e:
-        return f"Error scheduling automation: {e}"
+    except Exception:
+        logger.exception(
+            "Failed to schedule automation tool=%s hour=%s minute=%s",
+            tool_name,
+            hour,
+            minute,
+        )
+        return "Error scheduling automation. Check logs for details."
 
 
 @ai_tool(
@@ -185,8 +197,9 @@ async def list_active_automations() -> str:
             lines.append(f"• **{job.id}** → Next run: {next_run}")
 
         return "\n".join(lines)
-    except Exception as e:
-        return f"Error listing automations: {e}"
+    except Exception:
+        logger.exception("Failed listing active automations")
+        return "Error listing automations. Check logs for details."
 
 
 @ai_tool(
@@ -214,8 +227,18 @@ async def stop_automation(job_id: str) -> str:
         return scheduler_error
     scheduler = cast(Any, scheduler)
 
+    normalized_job_id = str(job_id or "").strip()
+    if not normalized_job_id:
+        return "Error: job_id is required."
+
+    if not re.fullmatch(r"auto_[A-Za-z0-9_.-]+", normalized_job_id):
+        return "Error: Invalid job_id format."
+
     try:
-        scheduler.remove_job(job_id)
-        return f"✅ Successfully stopped automation: {job_id}"
-    except Exception as e:
-        return f"Error stopping automation: {e}"
+        scheduler.remove_job(normalized_job_id)
+        return f"✅ Successfully stopped automation: {normalized_job_id}"
+    except JobLookupError:
+        return f"Error: Automation not found: {normalized_job_id}"
+    except Exception:
+        logger.exception("Failed to stop automation %s", normalized_job_id)
+        return "Error stopping automation. Check logs for details."
