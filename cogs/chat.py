@@ -99,10 +99,13 @@ def split_response_chunks(text: str, max_chunk_size: int = 1950) -> list[str]:
 
         chunk = candidate.rstrip()
         if not chunk:
-            chunk = remaining[:max_chunk_size]
+            candidate = remaining[:max_chunk_size]
+            chunk = candidate
 
         chunks.append(chunk)
-        remaining = remaining[len(chunk) :].lstrip("\n")
+        # Advance by candidate length (before rstrip) so stripped trailing
+        # whitespace is not re-processed in the next iteration.
+        remaining = remaining[len(candidate) :].lstrip("\n")
 
     return chunks
 
@@ -182,7 +185,7 @@ class ChatCog(commands.Cog):
                     for i in range(0, len(full_response), CHUNK_SIZE):
                         assembled += full_response[i : i + CHUNK_SIZE]
                         await response_msg.edit(content=assembled)
-                        await asyncio.sleep(0.5)   # stay well below Discord's 5 edits/second limit
+                        await asyncio.sleep(0.25)   # 4 edits/second — safely under Discord's 5/second limit
         except Exception as error:
             logger.exception("AI message handling failed")
             await message.channel.send(

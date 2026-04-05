@@ -29,11 +29,16 @@ class LLMHandler:
             summary = await self.summarize_history(model, messages)
             # Merge the summary into the existing system message so only one system
             # entry is present (some models reject multiple system messages).
-            original_system = messages[0].get("content", "") if messages else ""
-            messages = [
-                {"role": "system", "content": f"{original_system}\n\nPrevious conversation summary: {summary}"},
-                *messages[-8:],
-            ]
+            if messages and messages[0].get("role") == "system":
+                original_system = messages[0].get("content", "")
+                merged_system = f"{original_system}\n\nPrevious conversation summary: {summary}"
+                messages = [{"role": "system", "content": merged_system}, *messages[1:][-8:]]
+            else:
+                # No leading system message; prepend a standalone summary entry.
+                messages = [
+                    {"role": "system", "content": f"Previous conversation summary: {summary}"},
+                    *messages[-8:],
+                ]
             completion_kwargs["messages"] = messages
 
         response = await litellm.acompletion(**completion_kwargs)
