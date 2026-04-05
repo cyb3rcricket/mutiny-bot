@@ -30,7 +30,7 @@ source .venv/bin/activate
 2. Install the dependencies:
 
 ```bash
-pip install discord.py aiosqlite python-dotenv apscheduler litellm
+pip install -r requirements.txt
 ```
 
 3. Create a `.env` file in the project root with at least:
@@ -64,7 +64,7 @@ source .venv/bin/activate
 python mutiny_bot.py
 ```
 
-The bot will create or update `mutiny.db` on first launch, sync slash commands, and connect to Discord with the token from `.env`.
+The bot will create or update its local SQLite database on first launch, sync slash commands, and connect to Discord with the token from `.env`.
 
 ## Commands
 
@@ -85,4 +85,4 @@ The bot will create or update `mutiny.db` on first launch, sync slash commands, 
 
 - The bot is designed for local inference only. It passes `OLLAMA_API_BASE` into `litellm` requests and uses an allowlist of `ollama/` model IDs.
 - If `DISCORD_BOT_TOKEN` is missing, the bot exits immediately at startup.
-- Conversation history and configuration are stored in `mutiny.db`.
+- Conversation history and configuration are stored in a local SQLite database.
