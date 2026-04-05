@@ -168,3 +168,44 @@ class DatabaseManager:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("DELETE FROM broadcast_queue WHERE id = ?", (message_id,))
             await db.commit()
+
+    async def get_chat_history(self, user_id: Optional[str] = None, limit: int = 30) -> list[dict[str, str]]:
+        """Return the last `limit` messages from chat_history.
+
+        If `user_id` is provided, only return messages for that user. Results are
+        ordered chronologically (oldest first) within the returned window.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            if user_id:
+                cursor = await db.execute(
+                    """
+                    SELECT role, content
+                    FROM (
+                        SELECT role, content, timestamp, rowid
+                        FROM chat_history
+                        WHERE user_id = ?
+                        ORDER BY timestamp DESC, rowid DESC
+                        LIMIT ?
+                    )
+                    ORDER BY timestamp ASC, rowid ASC
+                    """,
+                    (user_id, limit),
+                )
+            else:
+                cursor = await db.execute(
+                    """
+                    SELECT role, content
+                    FROM (
+                        SELECT role, content, timestamp, rowid
+                        FROM chat_history
+                        ORDER BY timestamp DESC, rowid DESC
+                        LIMIT ?
+                    )
+                    ORDER BY timestamp ASC, rowid ASC
+                    """,
+                    (limit,),
+                )
+
+            rows = await cursor.fetchall()
+
+        return [{"role": row[0], "content": row[1]} for row in rows]

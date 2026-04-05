@@ -21,3 +21,17 @@ ALLOWED_MODELS = {
     "ollama/phi4-mini",
     "ollama/llama3.1",
 }
+
+# Default Discord intents shared across the project.
+import discord
+
+intents = discord.Intents.default()
+intents.message_content = True
+
+# Maximum number of messages to keep in full context before summarizing
+MAX_HISTORY_MESSAGES = 12
+
+# ID of the Discord channel where you want /jobs, /history, and /status to work
+# Right-click your monitoring channel → Copy ID, paste the number here.
+# Leave as None for now so the commands work in every channel.
+MONITORING_CHANNEL_ID = None

@@ -2,11 +2,11 @@
 
 import json
 from inspect import isawaitable
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 import litellm
-
 from tools.registry import AVAILABLE_TOOLS
+from config import MAX_HISTORY_MESSAGES
 
 
 class LLMHandler:
@@ -14,13 +14,18 @@ class LLMHandler:
 
     def __init__(self, api_base: str):
         self.api_base = api_base
-        litellm._turn_on_debug()
 
     async def generate_response(self, model: str, messages: list, tools: Optional[list] = None) -> str:
         """Generate a response from the LLM, handling tool calls if present."""
-        completion_kwargs = {"model": model, "messages": messages, "api_base": self.api_base}
+        completion_kwargs = {"model": model, "messages": messages, "api_base": self.api_base, "stream": False}
         if tools:
             completion_kwargs["tools"] = tools
+
+        # If the conversation is long, summarize earlier history to keep context small
+        if len(messages) > MAX_HISTORY_MESSAGES:
+            summary = await self.summarize_history(model, messages)
+            messages = [messages[0]] + [{"role": "system", "content": f"Previous conversation summary: {summary}"}] + messages[-8:]
+            completion_kwargs["messages"] = messages
 
         response = await litellm.acompletion(**completion_kwargs)
 
@@ -94,5 +99,32 @@ class LLMHandler:
             )
             ai_message = final_response.choices[0].message
 
+        ai_text = ai_message.content
+        return ai_text if isinstance(ai_text, str) else str(ai_text or "")
+
+    # Streaming responses are handled outside this handler now; remove astream_response.
+
+    async def summarize_history(self, model: str, full_history: list) -> str:
+        """Summarize the conversation history excluding the last 8 messages.
+
+        Returns a short one-sentence summary using the same style as other LLM calls.
+        """
+        # Exclude the last 8 messages to keep the summary focused on earlier context
+        history_to_summarize = full_history[:-8] if len(full_history) > 8 else []
+
+        # Build a concise system prompt asking for a one-sentence summary
+        system_prompt = (
+            "You are a concise assistant. Provide a single short sentence summarizing the following conversation history. "
+            "Be factual and brief."
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            *history_to_summarize,
+            {"role": "user", "content": "Summarize the conversation above in one short sentence."},
+        ]
+
+        response = await litellm.acompletion(model=model, messages=messages, api_base=self.api_base, stream=False)
+        ai_message = response.choices[0].message
         ai_text = ai_message.content
         return ai_text if isinstance(ai_text, str) else str(ai_text or "")

@@ -1,13 +1,10 @@
 """MutinyBot class definition."""
 
 import importlib
-import logging
 import os
 from inspect import isawaitable
 
-import aiosqlite
 import discord
-from discord import app_commands
 from discord.ext import commands
 from config import (
     ALLOWED_MODELS,
@@ -16,26 +13,13 @@ from config import (
     DEFAULT_MODEL,
     DEFAULT_SYSTEM_PROMPT,
     OLLAMA_API_BASE,
-    TOKEN,
+    intents,
 )
+from config import MONITORING_CHANNEL_ID
 from database.db import DatabaseManager
 from llm.llm_handler import LLMHandler
 from scheduler.scheduler_manager import SchedulerManager
 from tools.registry import AVAILABLE_TOOLS, TOOL_SCHEMAS
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("mutiny_bot")
-
-if not TOKEN:
-    raise ValueError(
-        "DISCORD_BOT_TOKEN is missing. Add it to your .env file before starting the bot."
-    )
-
-assert TOKEN is not None  # For type checker
-
-# Start with default intents and explicitly enable message content access.
-intents = discord.Intents.default()
-intents.message_content = True
 
 
 class MutinyBot(commands.Bot):
@@ -48,11 +32,10 @@ class MutinyBot(commands.Bot):
         self.scheduler_manager = SchedulerManager(self)
 
     async def setup_hook(self) -> None:
-        tools_dir = os.path.join(os.path.dirname(__file__), "tools")
+        tools_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools")
+        # Only load real AI tool modules from the tools/ folder
         for filename in sorted(os.listdir(tools_dir)):
-            if not filename.endswith(".py"):
-                continue
-            if filename in {"__init__.py", "registry.py"}:
+            if not filename.endswith(".py") or filename in {"__init__.py", "registry.py", "scheduler_manager.py"}:
                 continue
 
             module_name = f"tools.{filename[:-3]}"
@@ -72,6 +55,7 @@ class MutinyBot(commands.Bot):
         await self.load_extension("cogs.chat")
         await self.load_extension("cogs.admin")
         await self.load_extension("cogs.tools")
+        await self.load_extension("cogs.monitoring")
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:

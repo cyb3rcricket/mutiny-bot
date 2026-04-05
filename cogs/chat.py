@@ -1,12 +1,16 @@
 """Chat cog for MutinyBot message handling."""
 
 import logging
+import asyncio
 
 import discord
 from discord.ext import commands
 
 from config import ALLOWED_MODELS, DEFAULT_MODEL
 from tools.registry import TOOL_SCHEMAS
+
+
+
 
 logger = logging.getLogger("mutiny_bot")
 
@@ -116,6 +120,7 @@ class ChatCog(commands.Cog):
             return
 
         user_id = str(message.author.id)
+        CHUNK_SIZE = 900   # characters per edit — feels smooth and fast
 
         if is_automation_capabilities_question(message.content):
             capability_reply = build_automation_capabilities_message()
@@ -145,16 +150,32 @@ class ChatCog(commands.Cog):
                 *user_history,
             ]
 
-            async with message.channel.typing():
-                ai_text = await self.bot.llm_handler.generate_response(
-                    model=active_model,
-                    messages=messages_for_ai,
-                    tools=TOOL_SCHEMAS if TOOL_SCHEMAS and should_enable_tools(message.content) else None
-                )
-            await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=ai_text)
+            tools = TOOL_SCHEMAS if TOOL_SCHEMAS and should_enable_tools(message.content) else None
+            if tools:
+                async with message.channel.typing():
+                    ai_text = await self.bot.llm_handler.generate_response(
+                        model=active_model,
+                        messages=messages_for_ai,
+                        tools=tools
+                    )
+                await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=ai_text)
+            else:
+                response_msg = await message.channel.send("Thinking...")
 
-            for chunk in split_response_chunks(ai_text):
-                await message.channel.send(chunk)
+                async with message.channel.typing():
+                    ai_text = await self.bot.llm_handler.generate_response(
+                        model=active_model,
+                        messages=messages_for_ai,
+                        tools=None,
+                    )
+
+                await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=ai_text)
+
+                full_response = ai_text or ""
+                for i in range(0, len(full_response), CHUNK_SIZE):
+                    chunk = full_response[i : i + CHUNK_SIZE]
+                    await response_msg.edit(content=(response_msg.content or "") + chunk)
+                    await asyncio.sleep(0.08)   # tiny pause between edits for smoothness
         except Exception as error:
             logger.exception("AI message handling failed")
             await message.channel.send(
@@ -164,6 +185,8 @@ class ChatCog(commands.Cog):
 
         # Process commands so prefix commands still work when on_message is defined.
         await self.bot.process_commands(message)
+
+    # Streaming and stop-button support removed — responses are generated synchronously via generate_response.
 
 
 async def setup(bot):

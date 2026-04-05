@@ -58,3 +58,37 @@ class SchedulerManager:
     async def before_check_broadcast_queue(self) -> None:
         """Wait for bot readiness before polling broadcast queue."""
         await self.bot.wait_until_ready()
+
+    async def get_active_jobs(self) -> list:
+        """Return a list of active jobs with basic metadata.
+
+        Each job is represented as a dict containing at least: id, name, next_run_time, trigger, and func.
+        """
+        jobs_info = []
+        try:
+            jobs = list(self.scheduler.get_jobs())
+        except Exception:
+            return jobs_info
+
+        for job in jobs:
+            try:
+                func_name = None
+                if hasattr(job, "func") and job.func is not None:
+                    func_name = getattr(job.func, "__name__", str(job.func))
+                else:
+                    func_name = getattr(job, "func_ref", None)
+
+                jobs_info.append(
+                    {
+                        "id": getattr(job, "id", None),
+                        "name": getattr(job, "name", None),
+                        "next_run_time": getattr(job, "next_run_time", None),
+                        "trigger": str(getattr(job, "trigger", None)),
+                        "func": func_name,
+                    }
+                )
+            except Exception:
+                # Skip problematic job entries but continue
+                continue
+
+        return jobs_info
