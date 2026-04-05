@@ -7,15 +7,9 @@ from inspect import isawaitable
 import discord
 from discord.ext import commands
 from config import (
-    ALLOWED_MODELS,
-    BROADCAST_CHANNEL_ID,
     DB_PATH,
-    DEFAULT_MODEL,
-    DEFAULT_SYSTEM_PROMPT,
     OLLAMA_API_BASE,
-    intents,
 )
-from config import MONITORING_CHANNEL_ID
 from database.db import DatabaseManager
 from llm.llm_handler import LLMHandler
 from scheduler.scheduler_manager import SchedulerManager
@@ -35,7 +29,7 @@ class MutinyBot(commands.Bot):
         tools_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools")
         # Only load real AI tool modules from the tools/ folder
         for filename in sorted(os.listdir(tools_dir)):
-            if not filename.endswith(".py") or filename in {"__init__.py", "registry.py", "scheduler_manager.py"}:
+            if not filename.endswith(".py") or filename in {"__init__.py", "registry.py"}:
                 continue
 
             module_name = f"tools.{filename[:-3]}"
@@ -49,15 +43,14 @@ class MutinyBot(commands.Bot):
 
         await self.db_manager.setup_database()
         await self.scheduler_manager.start_scheduler()
-        # Sync slash commands so they are available in Discord.
-        await self.tree.sync()
         self.scheduler_manager.start_broadcast_task()
         await self.load_extension("cogs.chat")
         await self.load_extension("cogs.admin")
         await self.load_extension("cogs.tools")
         await self.load_extension("cogs.monitoring")
+        # Sync slash commands after all cogs are loaded so every command is registered.
+        await self.tree.sync()
 
-    @commands.Cog.listener()
     async def on_ready(self) -> None:
         """Run once when the bot has connected to Discord successfully."""
         print("MutinyBot is online and ready to disrupt!")

@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime
+from inspect import isawaitable
 
 from tools.registry import AVAILABLE_TOOLS, ai_tool
 
@@ -34,7 +35,7 @@ async def execute_and_broadcast(tool_name: str) -> str:
 
     try:
         result = AVAILABLE_TOOLS[tool_name]()
-        result_text = await result if hasattr(result, "__await__") else result
+        result_text = await result if isawaitable(result) else result
         result_text = str(result_text or "")
 
         channel = BOT_INSTANCE.get_channel(channel_id)

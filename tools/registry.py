@@ -13,8 +13,8 @@ def ai_tool(name: str, description: str, parameters: dict[str, Any]) -> Callable
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         AVAILABLE_TOOLS[name] = func
 
-        # Keep parameters present to maintain reliable function/tool schema handling.
-        normalized_parameters = parameters or {"type": "object", "properties": {}, "required": []}
+        # Copy to avoid mutating the caller's dict literal.
+        normalized_parameters = dict(parameters) if parameters is not None else {}
         if not normalized_parameters.get("type"):
             normalized_parameters["type"] = "object"
         if "properties" not in normalized_parameters:

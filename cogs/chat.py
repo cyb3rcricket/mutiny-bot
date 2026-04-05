@@ -10,7 +10,8 @@ from config import ALLOWED_MODELS, DEFAULT_MODEL
 from tools.registry import TOOL_SCHEMAS
 
 
-
+# Characters per edit — slow enough to stay well inside Discord's rate limit.
+CHUNK_SIZE = 900
 
 logger = logging.getLogger("mutiny_bot")
 
@@ -120,7 +121,6 @@ class ChatCog(commands.Cog):
             return
 
         user_id = str(message.author.id)
-        CHUNK_SIZE = 900   # characters per edit — feels smooth and fast
 
         if is_automation_capabilities_question(message.content):
             capability_reply = build_automation_capabilities_message()
@@ -159,6 +159,9 @@ class ChatCog(commands.Cog):
                         tools=tools
                     )
                 await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=ai_text)
+                # Send the tool-assisted response to the channel.
+                for chunk in split_response_chunks(ai_text):
+                    await message.channel.send(chunk)
             else:
                 response_msg = await message.channel.send("Thinking...")
 
@@ -172,10 +175,14 @@ class ChatCog(commands.Cog):
                 await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=ai_text)
 
                 full_response = ai_text or ""
-                for i in range(0, len(full_response), CHUNK_SIZE):
-                    chunk = full_response[i : i + CHUNK_SIZE]
-                    await response_msg.edit(content=(response_msg.content or "") + chunk)
-                    await asyncio.sleep(0.08)   # tiny pause between edits for smoothness
+                if not full_response:
+                    await response_msg.edit(content="I could not generate a response this time.")
+                else:
+                    assembled = ""
+                    for i in range(0, len(full_response), CHUNK_SIZE):
+                        assembled += full_response[i : i + CHUNK_SIZE]
+                        await response_msg.edit(content=assembled)
+                        await asyncio.sleep(0.5)   # stay well below Discord's 5 edits/second limit
         except Exception as error:
             logger.exception("AI message handling failed")
             await message.channel.send(

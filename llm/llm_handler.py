@@ -2,7 +2,7 @@
 
 import json
 from inspect import isawaitable
-from typing import AsyncIterator, Optional
+from typing import Optional
 
 import litellm
 from tools.registry import AVAILABLE_TOOLS
@@ -17,14 +17,23 @@ class LLMHandler:
 
     async def generate_response(self, model: str, messages: list, tools: Optional[list] = None) -> str:
         """Generate a response from the LLM, handling tool calls if present."""
+        # Shallow-copy so we never mutate the caller's list.
+        messages = list(messages)
+
         completion_kwargs = {"model": model, "messages": messages, "api_base": self.api_base, "stream": False}
         if tools:
             completion_kwargs["tools"] = tools
 
-        # If the conversation is long, summarize earlier history to keep context small
+        # If the conversation is long, summarize earlier history to keep context small.
         if len(messages) > MAX_HISTORY_MESSAGES:
             summary = await self.summarize_history(model, messages)
-            messages = [messages[0]] + [{"role": "system", "content": f"Previous conversation summary: {summary}"}] + messages[-8:]
+            # Merge the summary into the existing system message so only one system
+            # entry is present (some models reject multiple system messages).
+            original_system = messages[0].get("content", "") if messages else ""
+            messages = [
+                {"role": "system", "content": f"{original_system}\n\nPrevious conversation summary: {summary}"},
+                *messages[-8:],
+            ]
             completion_kwargs["messages"] = messages
 
         response = await litellm.acompletion(**completion_kwargs)
@@ -92,11 +101,15 @@ class LLMHandler:
                     }
                 )
 
-            final_response = await litellm.acompletion(
-                model=model,
-                api_base=self.api_base,
-                messages=messages,
-            )
+            # Pass tools through so the model can make further tool calls if needed.
+            final_kwargs: dict = {
+                "model": model,
+                "api_base": self.api_base,
+                "messages": messages,
+            }
+            if tools:
+                final_kwargs["tools"] = tools
+            final_response = await litellm.acompletion(**final_kwargs)
             ai_message = final_response.choices[0].message
 
         ai_text = ai_message.content

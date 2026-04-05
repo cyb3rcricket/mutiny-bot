@@ -14,8 +14,9 @@ class Monitoring(commands.Cog):
         self.bot = bot
 
     def _check_channel(self, interaction: discord.Interaction) -> bool:
-        if MONITORING_CHANNEL_ID and interaction.channel and interaction.channel.id != MONITORING_CHANNEL_ID:
-            return False
+        if MONITORING_CHANNEL_ID:
+            if interaction.channel is None or interaction.channel.id != MONITORING_CHANNEL_ID:
+                return False
         return True
 
     @app_commands.command(name="jobs", description="List active scheduled jobs")
@@ -69,7 +70,7 @@ class Monitoring(commands.Cog):
                 content = str(item)
 
             short = (content[:200] + "…") if len(content) > 200 else content
-            embed.add_field(name=f"{i}. {role}", value=short, inline=False)
+            embed.add_field(name=f"{i}. {role}", value=short or "(empty)", inline=False)
 
         await interaction.followup.send(embed=embed)
 

@@ -1,9 +1,13 @@
 """Scheduler manager for MutinyBot APScheduler and broadcast operations."""
 
+import logging
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from discord.ext import tasks
 
 from config import BROADCAST_CHANNEL_ID
+
+logger = logging.getLogger("mutiny_bot")
 
 
 class SchedulerManager:
@@ -45,11 +49,13 @@ class SchedulerManager:
             try:
                 channel = await self.bot.fetch_channel(BROADCAST_CHANNEL_ID)
             except Exception:
+                logger.exception("Failed to fetch broadcast channel %d", BROADCAST_CHANNEL_ID)
                 return
 
         try:
             await channel.send(content)
         except Exception:
+            logger.exception("Failed to send broadcast message to channel %d", BROADCAST_CHANNEL_ID)
             return
 
         await self.bot.db_manager.delete_broadcast(message_id)
