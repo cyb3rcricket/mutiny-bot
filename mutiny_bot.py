@@ -4,18 +4,20 @@ import logging
 import discord
 
 from bot.bot import MutinyBot
-from config import TOKEN, intents
+from config import TOKEN, intents, validate_startup_config
 
 
 # Basic logging configuration for the entire application.
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mutiny_bot")
 
-# Ensure a token is present before starting the bot.
-if not TOKEN:
-    raise ValueError(
-        "DISCORD_BOT_TOKEN is missing. Add it to your .env file before starting the bot."
-    )
+config_errors, config_warnings = validate_startup_config()
+for warning in config_warnings:
+    logger.warning(warning)
+
+if config_errors:
+    formatted_errors = "\n".join(f"- {error}" for error in config_errors)
+    raise ValueError(f"Invalid startup configuration:\n{formatted_errors}")
 
 
 if __name__ == "__main__":

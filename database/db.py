@@ -1,5 +1,6 @@
 """Database manager for MutinyBot SQLite operations."""
 
+import asyncio
 import os
 from typing import Optional
 
@@ -8,84 +9,119 @@ import aiosqlite
 from config import ALLOWED_MODELS, BROADCAST_CHANNEL_ID, DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
 
 
+MAX_STORED_CONTENT_CHARS = 8000
+TRUNCATION_SUFFIX = " [truncated]"
+
+
 class DatabaseManager:
     """Handles all SQLite database operations for the bot."""
 
     def __init__(self, db_path: str, bot=None):
         self.db_path = db_path
         self.bot = bot
+        self._db: Optional[aiosqlite.Connection] = None
+        self._db_lock: Optional[asyncio.Lock] = None
+
+    async def _get_lock(self) -> asyncio.Lock:
+        """Get or create the DB lifecycle lock in an active event loop."""
+        if self._db_lock is None:
+            self._db_lock = asyncio.Lock()
+        return self._db_lock
+
+    async def _ensure_connection(self) -> aiosqlite.Connection:
+        """Open and cache a single SQLite connection for the bot lifetime."""
+        db_lock = await self._get_lock()
+        async with db_lock:
+            if self._db is None:
+                self._db = await aiosqlite.connect(self.db_path)
+        return self._db
+
+    async def _get_db(self) -> aiosqlite.Connection:
+        """Return the initialized SQLite connection."""
+        db = await self._ensure_connection()
+        if db is None:
+            raise RuntimeError("Database connection is not initialized")
+        return db
+
+    async def close(self) -> None:
+        """Close the cached SQLite connection on bot shutdown."""
+        db_lock = await self._get_lock()
+        async with db_lock:
+            if self._db is not None:
+                await self._db.close()
+                self._db = None
 
     async def setup_database(self) -> None:
         """Create the SQLite database schema and indexes if they do not exist."""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS chat_history (
-                    user_id TEXT,
-                    role TEXT,
-                    content TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-                """
+        db = await self._get_db()
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_history (
+                user_id TEXT,
+                role TEXT,
+                content TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-            await db.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_chat_history_user_timestamp
-                ON chat_history (user_id, timestamp)
-                """
+            """
+        )
+        await db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_chat_history_user_timestamp
+            ON chat_history (user_id, timestamp)
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bot_config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS bot_config (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                )
-                """
+            """
+        )
+        await db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS broadcast_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT
             )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS broadcast_queue (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    content TEXT
-                )
-                """
-            )
-            await db.execute(
-                """
-                INSERT INTO bot_config (key, value)
-                VALUES ('model', ?)
-                ON CONFLICT(key) DO NOTHING
-                """,
-                (DEFAULT_MODEL,),
-            )
-            await db.execute(
-                """
-                INSERT INTO bot_config (key, value)
-                VALUES ('system_prompt', ?)
-                ON CONFLICT(key) DO NOTHING
-                """,
-                (DEFAULT_SYSTEM_PROMPT,),
-            )
-            await db.commit()
+            """
+        )
+        await db.execute(
+            """
+            INSERT INTO bot_config (key, value)
+            VALUES ('model', ?)
+            ON CONFLICT(key) DO NOTHING
+            """,
+            (DEFAULT_MODEL,),
+        )
+        await db.execute(
+            """
+            INSERT INTO bot_config (key, value)
+            VALUES ('system_prompt', ?)
+            ON CONFLICT(key) DO NOTHING
+            """,
+            (DEFAULT_SYSTEM_PROMPT,),
+        )
+        await db.commit()
 
     async def update_config(self, key: str, value: str) -> None:
         """Safely insert or update a bot_config setting."""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                """
-                INSERT INTO bot_config (key, value)
-                VALUES (?, ?)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                """,
-                (key, value),
-            )
-            await db.commit()
+        db = await self._get_db()
+        await db.execute(
+            """
+            INSERT INTO bot_config (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (key, value),
+        )
+        await db.commit()
 
     async def get_config(self, key: str, default: str) -> str:
         """Read a bot_config value with fallback and automatic default persistence."""
-        async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute("SELECT value FROM bot_config WHERE key = ?", (key,))
-            row = await cursor.fetchone()
+        db = await self._get_db()
+        cursor = await db.execute("SELECT value FROM bot_config WHERE key = ?", (key,))
+        row = await cursor.fetchone()
 
         if not row or not row[0]:
             await self.update_config(key, default)
@@ -120,16 +156,71 @@ class DatabaseManager:
 
     async def insert_history_message(self, user_id: str, role: str, content: str) -> None:
         """Persist one conversation message for a user."""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "INSERT INTO chat_history (user_id, role, content) VALUES (?, ?, ?)",
-                (user_id, role, content),
-            )
-            await db.commit()
+        normalized_user_id = str(user_id or "")
+        normalized_role = str(role or "")
+        normalized_content = str(content or "")
+
+        if len(normalized_content) > MAX_STORED_CONTENT_CHARS:
+            max_prefix_len = max(0, MAX_STORED_CONTENT_CHARS - len(TRUNCATION_SUFFIX))
+            normalized_content = f"{normalized_content[:max_prefix_len]}{TRUNCATION_SUFFIX}"
+
+        db = await self._get_db()
+        await db.execute(
+            "INSERT INTO chat_history (user_id, role, content) VALUES (?, ?, ?)",
+            (normalized_user_id, normalized_role, normalized_content),
+        )
+        await db.commit()
 
     async def get_recent_history(self, user_id: str, limit: int = 10) -> list[dict[str, str]]:
         """Read the most recent messages for a user in chronological order."""
-        async with aiosqlite.connect(self.db_path) as db:
+        db = await self._get_db()
+        cursor = await db.execute(
+            """
+            SELECT role, content
+            FROM (
+                SELECT role, content, timestamp, rowid
+                FROM chat_history
+                WHERE user_id = ?
+                ORDER BY timestamp DESC, rowid DESC
+                LIMIT ?
+            )
+            ORDER BY timestamp ASC, rowid ASC
+            """,
+            (user_id, limit),
+        )
+        rows = await cursor.fetchall()
+
+        return [{"role": row[0], "content": row[1]} for row in rows]
+
+    async def get_next_broadcast(self) -> Optional[tuple[int, str]]:
+        """Get the next broadcast message from the queue."""
+        db = await self._get_db()
+        cursor = await db.execute(
+            "SELECT id, content FROM broadcast_queue ORDER BY id ASC LIMIT 1"
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        message_id = int(row[0])
+        content = str(row[1] or "").strip()
+        return message_id, content
+
+    async def delete_broadcast(self, message_id: int) -> None:
+        """Delete a broadcast message from the queue."""
+        db = await self._get_db()
+        await db.execute("DELETE FROM broadcast_queue WHERE id = ?", (message_id,))
+        await db.commit()
+
+    async def get_chat_history(self, user_id: Optional[str] = None, limit: int = 30) -> list[dict[str, str]]:
+        """Return the last `limit` messages from chat_history.
+
+        If `user_id` is provided, only return messages for that user. Results are
+        ordered chronologically (oldest first) within the returned window.
+        """
+        db = await self._get_db()
+        if user_id:
             cursor = await db.execute(
                 """
                 SELECT role, content
@@ -144,68 +235,21 @@ class DatabaseManager:
                 """,
                 (user_id, limit),
             )
-            rows = await cursor.fetchall()
-
-        return [{"role": row[0], "content": row[1]} for row in rows]
-
-    async def get_next_broadcast(self) -> Optional[tuple[int, str]]:
-        """Get the next broadcast message from the queue."""
-        async with aiosqlite.connect(self.db_path) as db:
+        else:
             cursor = await db.execute(
-                "SELECT id, content FROM broadcast_queue ORDER BY id ASC LIMIT 1"
+                """
+                SELECT role, content
+                FROM (
+                    SELECT role, content, timestamp, rowid
+                    FROM chat_history
+                    ORDER BY timestamp DESC, rowid DESC
+                    LIMIT ?
+                )
+                ORDER BY timestamp ASC, rowid ASC
+                """,
+                (limit,),
             )
-            row = await cursor.fetchone()
 
-        if not row:
-            return None
-
-        message_id = int(row[0])
-        content = str(row[1] or "").strip()
-        return message_id, content
-
-    async def delete_broadcast(self, message_id: int) -> None:
-        """Delete a broadcast message from the queue."""
-        async with aiosqlite.connect(self.db_path) as db:
-            await db.execute("DELETE FROM broadcast_queue WHERE id = ?", (message_id,))
-            await db.commit()
-
-    async def get_chat_history(self, user_id: Optional[str] = None, limit: int = 30) -> list[dict[str, str]]:
-        """Return the last `limit` messages from chat_history.
-
-        If `user_id` is provided, only return messages for that user. Results are
-        ordered chronologically (oldest first) within the returned window.
-        """
-        async with aiosqlite.connect(self.db_path) as db:
-            if user_id:
-                cursor = await db.execute(
-                    """
-                    SELECT role, content
-                    FROM (
-                        SELECT role, content, timestamp, rowid
-                        FROM chat_history
-                        WHERE user_id = ?
-                        ORDER BY timestamp DESC, rowid DESC
-                        LIMIT ?
-                    )
-                    ORDER BY timestamp ASC, rowid ASC
-                    """,
-                    (user_id, limit),
-                )
-            else:
-                cursor = await db.execute(
-                    """
-                    SELECT role, content
-                    FROM (
-                        SELECT role, content, timestamp, rowid
-                        FROM chat_history
-                        ORDER BY timestamp DESC, rowid DESC
-                        LIMIT ?
-                    )
-                    ORDER BY timestamp ASC, rowid ASC
-                    """,
-                    (limit,),
-                )
-
-            rows = await cursor.fetchall()
+        rows = await cursor.fetchall()
 
         return [{"role": row[0], "content": row[1]} for row in rows]

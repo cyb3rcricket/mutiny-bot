@@ -1,39 +1,25 @@
 """Chat cog for MutinyBot message handling."""
 
-import logging
 import asyncio
+import logging
+from typing import Any
 
 import discord
 from discord.ext import commands
 
 from config import ALLOWED_MODELS, DEFAULT_MODEL
+from tools.scheduler_manager import reset_tool_request_context, set_tool_request_context
 from tools.registry import TOOL_SCHEMAS
-
-
-
 
 logger = logging.getLogger("mutiny_bot")
 
-
-def should_enable_tools(user_text: str) -> bool:
-    """Enable tool-calling only when user intent looks automation-related."""
-    normalized = (user_text or "").lower()
-    automation_markers = (
-        "automation",
-        "schedule",
-        "scheduled",
-        "daily",
-        "every day",
-        "morning brief",
-        "morning briefing",
-        "briefing",
-        "list active",
-        "active automations",
-        "stop automation",
-        "cancel automation",
-        "job id",
-    )
-    return any(marker in normalized for marker in automation_markers)
+# Discord has a 2000-character hard limit; keep a small safety margin.
+DISCORD_SAFE_MESSAGE_CHARS = 1950
+# Stream responses in smaller edits to keep updates snappy.
+STREAM_EDIT_CHUNK_SIZE = 900
+USER_RATE_LIMIT_MESSAGES = 5
+USER_RATE_LIMIT_WINDOW_SECONDS = 15.0
+MAX_CONCURRENT_LLM_REQUESTS = 2
 
 
 def is_automation_capabilities_question(user_text: str) -> bool:
@@ -64,7 +50,7 @@ def build_automation_capabilities_message() -> str:
         "- 'Stop automation auto_get_morning_briefing_...'")
 
 
-def split_response_chunks(text: str, max_chunk_size: int = 1950) -> list[str]:
+def split_response_chunks(text: str, max_chunk_size: int = DISCORD_SAFE_MESSAGE_CHARS) -> list[str]:
     """Split long text into Discord-safe chunks, preferring newline boundaries."""
     if not text:
         return ["I could not generate a response this time."]
@@ -96,12 +82,18 @@ def split_response_chunks(text: str, max_chunk_size: int = 1950) -> list[str]:
             if earlier_break > 0:
                 candidate = remaining[:earlier_break]
 
+        # Remember how many characters we intended to consume (the candidate slice).
+        consumed_len = len(candidate)
+
         chunk = candidate.rstrip()
         if not chunk:
+            # If stripping made the chunk empty, fall back to a hard max-sized slice
             chunk = remaining[:max_chunk_size]
+            consumed_len = len(chunk)
 
         chunks.append(chunk)
-        remaining = remaining[len(chunk) :].lstrip("\n")
+        # Advance by the original candidate length (or the fallback slice length)
+        remaining = remaining[consumed_len :].lstrip("\n")
 
     return chunks
 
@@ -109,8 +101,25 @@ def split_response_chunks(text: str, max_chunk_size: int = 1950) -> list[str]:
 class ChatCog(commands.Cog):
     """Cog for handling chat messages and AI responses."""
 
-    def __init__(self, bot):
+    def __init__(self, bot: Any) -> None:
         self.bot = bot
+        self._rate_limiter = commands.CooldownMapping.from_cooldown(
+            USER_RATE_LIMIT_MESSAGES,
+            USER_RATE_LIMIT_WINDOW_SECONDS,
+            commands.BucketType.user,
+        )
+        self._llm_semaphore = asyncio.Semaphore(MAX_CONCURRENT_LLM_REQUESTS)
+
+    @staticmethod
+    def _is_admin_user(message: discord.Message) -> bool:
+        """Return True when the author has manage-guild or administrator permissions."""
+        if not message.guild:
+            return False
+        if not isinstance(message.author, discord.Member):
+            return False
+
+        perms = message.author.guild_permissions
+        return bool(perms and (perms.manage_guild or perms.administrator))
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -119,8 +128,16 @@ class ChatCog(commands.Cog):
         if message.author == self.bot.user:
             return
 
+        bucket = self._rate_limiter.get_bucket(message)
+        retry_after = bucket.update_rate_limit() if bucket else None
+        if retry_after:
+            await message.channel.send(
+                f"You are sending requests too quickly. Try again in {retry_after:.1f}s."
+            )
+            await self.bot.process_commands(message)
+            return
+
         user_id = str(message.author.id)
-        CHUNK_SIZE = 900   # characters per edit — feels smooth and fast
 
         if is_automation_capabilities_question(message.content):
             capability_reply = build_automation_capabilities_message()
@@ -150,37 +167,62 @@ class ChatCog(commands.Cog):
                 *user_history,
             ]
 
-            tools = TOOL_SCHEMAS if TOOL_SCHEMAS and should_enable_tools(message.content) else None
+            # Always pass tool schemas; the model decides when to call tools.
+            tools = TOOL_SCHEMAS if TOOL_SCHEMAS else None
             if tools:
-                async with message.channel.typing():
-                    ai_text = await self.bot.llm_handler.generate_response(
-                        model=active_model,
-                        messages=messages_for_ai,
-                        tools=tools
-                    )
+                context_tokens = set_tool_request_context(
+                    user_id=user_id,
+                    is_admin=self._is_admin_user(message),
+                    scheduler=getattr(self.bot, "scheduler", None),
+                )
+                try:
+                    async with self._llm_semaphore:
+                        async with message.channel.typing():
+                            ai_text = await self.bot.llm_handler.generate_response(
+                                model=active_model,
+                                messages=messages_for_ai,
+                                tools=tools,
+                            )
+                finally:
+                    reset_tool_request_context(context_tokens)
+
                 await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=ai_text)
+
+                # Ensure tool-enabled AI responses are sent to the Discord channel.
+                # Use the existing splitter to keep messages Discord-safe and readable.
+                full_response = ai_text or ""
+                for chunk in split_response_chunks(full_response):
+                    await message.channel.send(chunk)
             else:
                 response_msg = await message.channel.send("Thinking...")
 
-                async with message.channel.typing():
-                    ai_text = await self.bot.llm_handler.generate_response(
-                        model=active_model,
-                        messages=messages_for_ai,
-                        tools=None,
-                    )
+                async with self._llm_semaphore:
+                    async with message.channel.typing():
+                        ai_text = await self.bot.llm_handler.generate_response(
+                            model=active_model,
+                            messages=messages_for_ai,
+                            tools=None,
+                        )
 
                 await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=ai_text)
 
-                full_response = ai_text or ""
-                for i in range(0, len(full_response), CHUNK_SIZE):
-                    chunk = full_response[i : i + CHUNK_SIZE]
-                    await response_msg.edit(content=(response_msg.content or "") + chunk)
-                    await asyncio.sleep(0.08)   # tiny pause between edits for smoothness
+                full_response = (ai_text or "").strip()
+                if not full_response:
+                    await response_msg.edit(content="I could not generate a response this time.")
+                else:
+                    first_chunk = True
+                    for i in range(0, len(full_response), STREAM_EDIT_CHUNK_SIZE):
+                        chunk = full_response[i : i + STREAM_EDIT_CHUNK_SIZE]
+                        if first_chunk:
+                            await response_msg.edit(content=chunk)
+                            first_chunk = False
+                        else:
+                            await response_msg.edit(content=(response_msg.content or "") + chunk)
+                        await asyncio.sleep(0.08)   # tiny pause between edits for smoothness
         except Exception as error:
             logger.exception("AI message handling failed")
             await message.channel.send(
-                "Sorry, I hit an AI error and could not respond right now. "
-                f"({type(error).__name__}: {error})"
+                "Sorry, I hit an AI error and could not respond right now. Please try again shortly."
             )
 
         # Process commands so prefix commands still work when on_message is defined.
@@ -189,6 +231,6 @@ class ChatCog(commands.Cog):
     # Streaming and stop-button support removed — responses are generated synchronously via generate_response.
 
 
-async def setup(bot):
+async def setup(bot: Any) -> None:
     """Add the cog to the bot."""
     await bot.add_cog(ChatCog(bot))

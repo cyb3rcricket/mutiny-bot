@@ -1,15 +1,31 @@
 """Shared configuration for MutinyBot."""
 
 import os
+from urllib.parse import urlparse
 
+import discord
 from dotenv import load_dotenv
 
 # Load environment variables from a local .env file before reading settings.
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-BROADCAST_CHANNEL_ID = int(os.getenv("BROADCAST_CHANNEL_ID", "0"))
+
+# Parse BROADCAST_CHANNEL_ID safely at import time. If the env var is missing,
+# empty, or non-numeric (e.g. "none"), fall back to 0 instead of raising.
+_raw_broadcast = os.getenv("BROADCAST_CHANNEL_ID", "")
+try:
+    if isinstance(_raw_broadcast, str) and _raw_broadcast.strip().lower() in ("", "none", "null"):
+        BROADCAST_CHANNEL_ID = 0
+    else:
+        BROADCAST_CHANNEL_ID = int(_raw_broadcast)
+except (TypeError, ValueError):
+    BROADCAST_CHANNEL_ID = 0
 OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")
+
+# Timezone used by scheduled automation tools (IANA tz name, e.g. "America/Chicago", "UTC").
+AUTOMATION_TIMEZONE = os.getenv("AUTOMATION_TIMEZONE", "America/Chicago").strip() or "America/Chicago"
+
 DEFAULT_MODEL = "ollama/qwen2.5-coder:7b"
 DEFAULT_SYSTEM_PROMPT = (
     "You are MutinyBot, a practical IT admin assistant. "
@@ -22,9 +38,6 @@ ALLOWED_MODELS = {
     "ollama/llama3.1",
 }
 
-# Default Discord intents shared across the project.
-import discord
-
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -35,3 +48,29 @@ MAX_HISTORY_MESSAGES = 12
 # Right-click your monitoring channel → Copy ID, paste the number here.
 # Leave as None for now so the commands work in every channel.
 MONITORING_CHANNEL_ID = None
+
+
+def validate_startup_config() -> tuple[list[str], list[str]]:
+    """Validate startup configuration and return (errors, warnings)."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not TOKEN or not str(TOKEN).strip():
+        errors.append("DISCORD_BOT_TOKEN is missing or empty.")
+
+    raw_broadcast = str(_raw_broadcast or "").strip()
+    if raw_broadcast and raw_broadcast.lower() not in {"none", "null"}:
+        try:
+            int(raw_broadcast)
+        except (TypeError, ValueError):
+            warnings.append(
+                "BROADCAST_CHANNEL_ID is not numeric; falling back to 0 (broadcasts disabled)."
+            )
+
+    parsed_ollama_url = urlparse(OLLAMA_API_BASE)
+    if parsed_ollama_url.scheme not in {"http", "https"} or not parsed_ollama_url.netloc:
+        warnings.append(
+            "OLLAMA_API_BASE does not look like a valid http/https URL; API calls may fail."
+        )
+
+    return errors, warnings

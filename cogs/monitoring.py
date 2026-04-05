@@ -1,5 +1,7 @@
 """Monitoring cog: slash commands for jobs, history, and status."""
 
+from typing import Any
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -7,11 +9,27 @@ from discord.ext import commands
 from config import MONITORING_CHANNEL_ID
 
 
-class Monitoring(commands.Cog):
+HISTORY_DISPLAY_LIMIT = 10
+HISTORY_PREVIEW_CHARS = 200
+BOTSTATUS_HISTORY_LIMIT = 50
+
+
+class MonitoringCog(commands.Cog):
     """Cog exposing monitoring slash commands."""
 
-    def __init__(self, bot):
+    def __init__(self, bot: Any) -> None:
         self.bot = bot
+
+    @staticmethod
+    def _has_admin_permissions(interaction: discord.Interaction) -> bool:
+        """Allow only users with Manage Guild or Administrator permissions."""
+        if not interaction.guild:
+            return False
+        if not isinstance(interaction.user, discord.Member):
+            return False
+
+        perms = interaction.user.guild_permissions
+        return bool(perms and (perms.manage_guild or perms.administrator))
 
     def _check_channel(self, interaction: discord.Interaction) -> bool:
         if MONITORING_CHANNEL_ID and interaction.channel and interaction.channel.id != MONITORING_CHANNEL_ID:
@@ -19,7 +37,7 @@ class Monitoring(commands.Cog):
         return True
 
     @app_commands.command(name="jobs", description="List active scheduled jobs")
-    async def jobs(self, interaction: discord.Interaction):
+    async def jobs(self, interaction: discord.Interaction) -> None:
         if not self._check_channel(interaction):
             await interaction.response.send_message("This command can only be used in the monitoring channel.", ephemeral=True)
             return
@@ -42,9 +60,17 @@ class Monitoring(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="history", description="Show recent chat history (admin) 📜")
-    async def history(self, interaction: discord.Interaction):
+    @app_commands.default_permissions(manage_guild=True)
+    async def history(self, interaction: discord.Interaction) -> None:
         if not self._check_channel(interaction):
             await interaction.response.send_message("This command can only be used in the monitoring channel.", ephemeral=True)
+            return
+
+        if not self._has_admin_permissions(interaction):
+            await interaction.response.send_message(
+                "You need Manage Server or Administrator permission to view global chat history.",
+                ephemeral=True,
+            )
             return
 
         await interaction.response.defer()
@@ -56,8 +82,8 @@ class Monitoring(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        # Show up to 10 recent items
-        for i, item in enumerate(history[:10], 1):
+        # Show a bounded list of recent items.
+        for i, item in enumerate(history[:HISTORY_DISPLAY_LIMIT], 1):
             # item may be dict or tuple (role, content)
             if isinstance(item, dict):
                 role = item.get("role", "?")
@@ -68,20 +94,24 @@ class Monitoring(commands.Cog):
                 role = "assistant"
                 content = str(item)
 
-            short = (content[:200] + "…") if len(content) > 200 else content
+            short = (content[:HISTORY_PREVIEW_CHARS] + "…") if len(content) > HISTORY_PREVIEW_CHARS else content
             embed.add_field(name=f"{i}. {role}", value=short, inline=False)
 
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="botstatus", description="Show system status and job counts ⚙️ (botstatus)")
-    async def botstatus(self, interaction: discord.Interaction):
+    async def botstatus(self, interaction: discord.Interaction) -> None:
         if not self._check_channel(interaction):
             await interaction.response.send_message("This command can only be used in the monitoring channel.", ephemeral=True)
             return
 
         await interaction.response.defer()
         jobs = await self.bot.scheduler_manager.get_active_jobs()
-        history = await self.bot.db_manager.get_chat_history(limit=50) if hasattr(self.bot.db_manager, "get_chat_history") else None
+        history = (
+            await self.bot.db_manager.get_chat_history(limit=BOTSTATUS_HISTORY_LIMIT)
+            if hasattr(self.bot.db_manager, "get_chat_history")
+            else None
+        )
 
         embed = discord.Embed(title="System Status ⚙️", color=0xf1c40f)
         embed.add_field(name="Scheduled Jobs", value=str(len(jobs) if jobs is not None else 0), inline=True)
@@ -91,5 +121,5 @@ class Monitoring(commands.Cog):
         await interaction.followup.send(embed=embed)
 
 
-async def setup(bot: commands.Bot):
-    await bot.add_cog(Monitoring(bot))
+async def setup(bot: Any) -> None:
+    await bot.add_cog(MonitoringCog(bot))

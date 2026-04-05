@@ -1,35 +1,85 @@
 """LLM handler for MutinyBot using litellm and Ollama."""
 
 import json
+import logging
+from collections.abc import Callable
 from inspect import isawaitable
-from typing import AsyncIterator, Optional
+from typing import Any, Optional
 
 import litellm
-from tools.registry import AVAILABLE_TOOLS
 from config import MAX_HISTORY_MESSAGES
+
+
+MAX_TAIL_MESSAGES = 8
+logger = logging.getLogger("mutiny_bot.llm")
 
 
 class LLMHandler:
     """Handles LLM interactions with litellm and Ollama."""
 
-    def __init__(self, api_base: str):
+    def __init__(
+        self,
+        api_base: str,
+        tool_functions: Optional[dict[str, Callable[..., Any]]] = None,
+    ):
         self.api_base = api_base
+        self.tool_functions = tool_functions if tool_functions is not None else {}
 
-    async def generate_response(self, model: str, messages: list, tools: Optional[list] = None) -> str:
+    @staticmethod
+    def _extract_first_message(response: Any) -> Any:
+        """Safely extract the first completion message object."""
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            return None
+        return getattr(choices[0], "message", None)
+
+    async def generate_response(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: Optional[list] = None,
+    ) -> str:
         """Generate a response from the LLM, handling tool calls if present."""
-        completion_kwargs = {"model": model, "messages": messages, "api_base": self.api_base, "stream": False}
+        completion_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "api_base": self.api_base,
+            "stream": False,
+        }
         if tools:
             completion_kwargs["tools"] = tools
 
-        # If the conversation is long, summarize earlier history to keep context small
+        # If the conversation is long, summarize earlier history to keep context small.
+        # Be defensive: validate that the first message is a system prompt. If so,
+        # merge the generated summary into that single system message. If not,
+        # create a new system message containing the summary. If summarization
+        # fails, fall back to the original messages unchanged.
         if len(messages) > MAX_HISTORY_MESSAGES:
-            summary = await self.summarize_history(model, messages)
-            messages = [messages[0]] + [{"role": "system", "content": f"Previous conversation summary: {summary}"}] + messages[-8:]
-            completion_kwargs["messages"] = messages
+            try:
+                summary = await self.summarize_history(model, messages)
+            except Exception:
+                logger.exception("History summarization failed, continuing without summary")
+                summary = None
+
+            if summary:
+                tail = messages[-MAX_TAIL_MESSAGES:]
+                # If first message is system, merge the summary into it to avoid
+                # inserting multiple system messages which some models reject.
+                if messages and isinstance(messages[0], dict) and messages[0].get("role") == "system":
+                    first_sys = messages[0].copy()
+                    first_sys["content"] = (first_sys.get("content", "") + "\n\nPrevious conversation summary: " + summary).strip()
+                    messages = [first_sys] + tail
+                else:
+                    # No system message present; create a single system message with the summary.
+                    messages = [{"role": "system", "content": f"Previous conversation summary: {summary}"}] + tail
+
+                completion_kwargs["messages"] = messages
 
         response = await litellm.acompletion(**completion_kwargs)
 
-        ai_message = response.choices[0].message
+        ai_message = self._extract_first_message(response)
+        if ai_message is None:
+            return ""
         tool_calls = getattr(ai_message, "tool_calls", None) or []
 
         if tool_calls:
@@ -73,7 +123,7 @@ class LLMHandler:
                 except json.JSONDecodeError:
                     parsed_arguments = {}
 
-                tool_function = AVAILABLE_TOOLS.get(tool_name)
+                tool_function = self.tool_functions.get(tool_name)
                 if tool_function is None:
                     result = f"Tool not found: {tool_name}"
                 else:
@@ -97,20 +147,24 @@ class LLMHandler:
                 api_base=self.api_base,
                 messages=messages,
             )
-            ai_message = final_response.choices[0].message
+            ai_message = self._extract_first_message(final_response)
+            if ai_message is None:
+                return ""
 
         ai_text = ai_message.content
         return ai_text if isinstance(ai_text, str) else str(ai_text or "")
 
     # Streaming responses are handled outside this handler now; remove astream_response.
 
-    async def summarize_history(self, model: str, full_history: list) -> str:
+    async def summarize_history(self, model: str, full_history: list[dict[str, Any]]) -> str:
         """Summarize the conversation history excluding the last 8 messages.
 
         Returns a short one-sentence summary using the same style as other LLM calls.
         """
         # Exclude the last 8 messages to keep the summary focused on earlier context
-        history_to_summarize = full_history[:-8] if len(full_history) > 8 else []
+        history_to_summarize = (
+            full_history[:-MAX_TAIL_MESSAGES] if len(full_history) > MAX_TAIL_MESSAGES else []
+        )
 
         # Build a concise system prompt asking for a one-sentence summary
         system_prompt = (
@@ -125,6 +179,8 @@ class LLMHandler:
         ]
 
         response = await litellm.acompletion(model=model, messages=messages, api_base=self.api_base, stream=False)
-        ai_message = response.choices[0].message
+        ai_message = self._extract_first_message(response)
+        if ai_message is None:
+            return ""
         ai_text = ai_message.content
         return ai_text if isinstance(ai_text, str) else str(ai_text or "")
