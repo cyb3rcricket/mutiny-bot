@@ -1,7 +1,9 @@
 """Chat cog for MutinyBot message handling."""
 
 import asyncio
+import json
 import logging
+import re
 from typing import Any
 
 import discord
@@ -20,6 +22,7 @@ STREAM_EDIT_CHUNK_SIZE = 900
 USER_RATE_LIMIT_MESSAGES = 5
 USER_RATE_LIMIT_WINDOW_SECONDS = 15.0
 MAX_CONCURRENT_LLM_REQUESTS = 2
+COMMAND_TEXT_RE = re.compile(r"^[\s\ufeff\u200b\u200c\u200d]*/\S+")
 
 
 def is_automation_capabilities_question(user_text: str) -> bool:
@@ -48,6 +51,47 @@ def build_automation_capabilities_message() -> str:
         "- 'Schedule get_morning_briefing daily at 7:00'\n"
         "- 'List my active automations'\n"
         "- 'Stop automation auto_get_morning_briefing_...'")
+
+
+def _is_raw_json_response(text: str) -> bool:
+    """Check if the response is raw JSON (structural/tool-like output instead of natural text)."""
+    if not text or not text.strip().startswith("{"):
+        return False
+    
+    try:
+        obj = json.loads(text.strip())
+        # If it parsed as JSON and has no obvious tool structure, it's likely a formatting error
+        # Real tool calls would go through the LLM handler's tool_calls pathway, not here
+        return isinstance(obj, dict) and not obj.get("type") and not obj.get("id")
+    except (json.JSONDecodeError, ValueError):
+        return False
+
+
+async def _convert_json_to_natural_language(
+    llm_handler: Any,
+    model: str,
+    json_response: str,
+    original_user_message: str,
+    conversation_history: list[dict[str, Any]],
+) -> str:
+    """Convert a malformed JSON response to natural language using the LLM."""
+    try:
+        # Use a clearer, more direct system prompt that emphasizes being MutinyBot
+        recovery_messages = [
+            {"role": "system", "content": "You are MutinyBot, an IT admin assistant. You are responding directly to a user. Respond naturally and conversationally - no JSON output. Be helpful and professional."},
+            {"role": "user", "content": original_user_message},
+        ]
+        
+        recovery_response = await llm_handler.generate_response(
+            model=model,
+            messages=recovery_messages,
+            tools=None,  # Don't use tools for recovery
+        )
+        return recovery_response.strip() if recovery_response else "Hello! How can I help?"
+    except Exception as e:
+        logger.warning(f"Failed to recover from JSON response: {e}")
+        # Fallback to a generic response
+        return "Hello! How can I help?"
 
 
 def split_response_chunks(text: str, max_chunk_size: int = DISCORD_SAFE_MESSAGE_CHARS) -> list[str]:
@@ -128,6 +172,13 @@ class ChatCog(commands.Cog):
         if message.author.bot:
             return
 
+        # Treat slash-like text as a command hint instead of an AI prompt.
+        if COMMAND_TEXT_RE.match(message.content or ""):
+            await message.channel.send(
+                "Use Discord's slash-command menu for app commands like `/sync-commands` and `/post-commands`."
+            )
+            return
+
         bucket = self._rate_limiter.get_bucket(message)
         retry_after = bucket.update_rate_limit() if bucket else None
         if retry_after:
@@ -151,7 +202,7 @@ class ChatCog(commands.Cog):
         # Send the user's message to the AI model and return its response.
         try:
             await self.bot.db_manager.insert_history_message(user_id=user_id, role="user", content=message.content)
-            user_history = await self.bot.db_manager.get_recent_history(user_id=user_id, limit=10)
+            user_history = await self.bot.db_manager.get_user_recent_history(user_id=user_id, limit=10)
             active_model = await self.bot.db_manager.get_current_model()
             if active_model not in ALLOWED_MODELS:
                 active_model = DEFAULT_MODEL
@@ -191,6 +242,20 @@ class ChatCog(commands.Cog):
                 # Ensure tool-enabled AI responses are sent to the Discord channel.
                 # Use the existing splitter to keep messages Discord-safe and readable.
                 full_response = ai_text or ""
+                
+                # Detect and recover from JSON responses that should be natural language
+                if _is_raw_json_response(full_response):
+                    logger.info(f"Detected JSON response that should be natural language: {full_response[:100]}")
+                    full_response = await _convert_json_to_natural_language(
+                        llm_handler=self.bot.llm_handler,
+                        model=active_model,
+                        json_response=full_response,
+                        original_user_message=message.content,
+                        conversation_history=messages_for_ai,
+                    )
+                    # Update the stored history with the corrected response
+                    await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=full_response)
+                
                 for chunk in split_response_chunks(full_response):
                     await message.channel.send(chunk)
             else:

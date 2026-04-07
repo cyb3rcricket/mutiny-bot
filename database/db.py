@@ -92,6 +92,15 @@ class DatabaseManager:
         )
         await db.execute(
             """
+            CREATE TABLE IF NOT EXISTS facts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fact TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        await db.execute(
+            """
             INSERT INTO bot_config (key, value)
             VALUES ('model', ?)
             ON CONFLICT(key) DO NOTHING
@@ -175,7 +184,7 @@ class DatabaseManager:
         )
         await db.commit()
 
-    async def get_recent_history(self, user_id: str, limit: int = 10) -> list[dict[str, str]]:
+    async def get_user_recent_history(self, user_id: str, limit: int = 10) -> list[dict[str, str]]:
         """Read the most recent messages for a user in chronological order."""
         normalized_user_id = str(user_id or "").strip()
         if not normalized_user_id:
@@ -265,3 +274,26 @@ class DatabaseManager:
         rows = await cursor.fetchall()
 
         return [{"role": row[0], "content": row[1]} for row in rows]
+
+    async def get_recent_history(self) -> list[dict[str, str]]:
+        """Return the last 20 messages from chat_history as a list of dicts with role and content."""
+        return await self.get_chat_history(limit=20)
+
+    async def clear_chat_history(self, user_id: str) -> None:
+        """Clear all chat history for the given user_id."""
+        db = await self._get_db()
+        await db.execute("DELETE FROM chat_history WHERE user_id = ?", (user_id,))
+        await db.commit()
+
+    async def save_fact(self, fact: str) -> None:
+        """Save a fact to the database."""
+        db = await self._get_db()
+        await db.execute("INSERT INTO facts (fact) VALUES (?)", (fact,))
+        await db.commit()
+
+    async def get_all_facts(self) -> list[str]:
+        """Get all saved facts."""
+        db = await self._get_db()
+        cursor = await db.execute("SELECT fact FROM facts ORDER BY created_at DESC")
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]

@@ -21,7 +21,7 @@ class DatabaseManagerAsyncTests(unittest.IsolatedAsyncioTestCase):
         await self.db_manager.insert_history_message("u1", "user", "hello")
         await self.db_manager.insert_history_message("u1", "assistant", "world")
 
-        history = await self.db_manager.get_recent_history("u1", limit=10)
+        history = await self.db_manager.get_user_recent_history("u1", limit=10)
         self.assertEqual(len(history), 2)
         self.assertEqual(history[0]["role"], "user")
         self.assertEqual(history[1]["content"], "world")
@@ -30,14 +30,14 @@ class DatabaseManagerAsyncTests(unittest.IsolatedAsyncioTestCase):
         oversized = "a" * (MAX_STORED_CONTENT_CHARS + 200)
         await self.db_manager.insert_history_message("u2", "assistant", oversized)
 
-        history = await self.db_manager.get_recent_history("u2", limit=1)
+        history = await self.db_manager.get_user_recent_history("u2", limit=1)
         stored = history[0]["content"]
         self.assertEqual(len(stored), MAX_STORED_CONTENT_CHARS)
         self.assertTrue(stored.endswith(TRUNCATION_SUFFIX))
 
-    async def test_get_recent_history_empty_user_id_returns_empty(self) -> None:
+    async def test_get_user_recent_history_empty_user_id_returns_empty(self) -> None:
         await self.db_manager.insert_history_message("u1", "user", "hello")
-        history = await self.db_manager.get_recent_history("", limit=10)
+        history = await self.db_manager.get_user_recent_history("", limit=10)
         self.assertEqual(history, [])
 
     async def test_get_chat_history_blank_user_id_returns_empty(self) -> None:

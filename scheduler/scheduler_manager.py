@@ -105,10 +105,7 @@ class SchedulerManager:
         await self.bot.wait_until_ready()
 
     async def get_active_jobs(self) -> list[dict[str, Any]]:
-        """Return a list of active jobs with basic metadata.
-
-        Each job is represented as a dict containing at least: id, name, next_run_time, trigger, and func.
-        """
+        """Return a list of active jobs with their ID, next run time, and name."""
         jobs_info = []
         try:
             jobs = list(self.scheduler.get_jobs())
@@ -117,19 +114,11 @@ class SchedulerManager:
 
         for job in jobs:
             try:
-                func_name = None
-                if hasattr(job, "func") and job.func is not None:
-                    func_name = getattr(job.func, "__name__", str(job.func))
-                else:
-                    func_name = getattr(job, "func_ref", None)
-
                 jobs_info.append(
                     {
                         "id": getattr(job, "id", None),
                         "name": getattr(job, "name", None),
                         "next_run_time": getattr(job, "next_run_time", None),
-                        "trigger": str(getattr(job, "trigger", None)),
-                        "func": func_name,
                     }
                 )
             except Exception:

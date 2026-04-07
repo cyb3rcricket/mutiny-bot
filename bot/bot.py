@@ -6,7 +6,11 @@ import os
 from inspect import isawaitable
 from typing import Any
 
+import discord
 from discord.ext import commands
+from discord import app_commands
+import time
+from collections import defaultdict
 from config import DB_PATH, OLLAMA_API_BASE, intents
 from database.db import DatabaseManager
 from llm.llm_handler import LLMHandler
@@ -25,6 +29,8 @@ class MutinyBot(commands.Bot):
         self.db_manager = DatabaseManager(DB_PATH, self)
         self.llm_handler = LLMHandler(OLLAMA_API_BASE, tool_functions=AVAILABLE_TOOLS)
         self.scheduler_manager = SchedulerManager(self)
+        # Simple cooldown tracking: user_id -> last_command_time
+        self.command_cooldowns = defaultdict(float)
 
     async def setup_hook(self) -> None:
         tools_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools")
@@ -49,12 +55,60 @@ class MutinyBot(commands.Bot):
         await self.load_extension("cogs.admin")
         await self.load_extension("cogs.tools")
         await self.load_extension("cogs.monitoring")
-        # Sync slash commands after all cogs are loaded so their app_commands are registered on the tree.
         await self.tree.sync()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Global cooldown check for slash commands."""
+        if isinstance(interaction, discord.Interaction) and interaction.type == discord.InteractionType.application_command:
+            user_id = interaction.user.id
+            current_time = time.time()
+            last_used = self.command_cooldowns[user_id]
+            
+            if current_time - last_used < 3.0:
+                # Cooldown active, raise error to be handled by on_app_command_error
+                raise app_commands.CommandOnCooldown(
+                    cooldown=app_commands.Cooldown(1, 3.0),
+                    retry_after=3.0 - (current_time - last_used)
+                )
+            
+            self.command_cooldowns[user_id] = current_time
+        
+        return True
 
     async def on_ready(self) -> None:
         """Run once when the bot has connected to Discord successfully."""
         logger.info("MutinyBot is online and ready to disrupt!")
+
+    async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError) -> None:
+        """Handle slash command errors gracefully."""
+        # Handle cooldown errors specifically
+        if isinstance(error, app_commands.CommandOnCooldown):
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    f"Please wait {error.retry_after:.1f} seconds before using this command again.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    f"Please wait {error.retry_after:.1f} seconds before using this command again.",
+                    ephemeral=True
+                )
+            return
+
+        # Log other errors and send generic message
+        logger.error("Slash command error: %s", error, exc_info=True)
+
+        # Send a friendly error message
+        if not interaction.response.is_done():
+            await interaction.response.send_message(
+                "Something went wrong, try again",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                "Something went wrong, try again",
+                ephemeral=True
+            )
 
     async def close(self) -> None:
         """Close long-lived services cleanly before bot shutdown."""
