@@ -29,6 +29,7 @@ class MutinyBot(commands.Bot):
         self.db_manager = DatabaseManager(DB_PATH, self)
         self.llm_handler = LLMHandler(OLLAMA_API_BASE, tool_functions=AVAILABLE_TOOLS)
         self.scheduler_manager = SchedulerManager(self)
+        self._app_commands_synced = False
         # Simple cooldown tracking: user_id -> last_command_time
         self.command_cooldowns = defaultdict(float)
 
@@ -55,7 +56,7 @@ class MutinyBot(commands.Bot):
         await self.load_extension("cogs.admin")
         await self.load_extension("cogs.tools")
         await self.load_extension("cogs.monitoring")
-        await self.tree.sync()
+        await self.load_extension("cogs.memory_palace_cog")
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """Global cooldown check for slash commands."""
@@ -78,6 +79,43 @@ class MutinyBot(commands.Bot):
     async def on_ready(self) -> None:
         """Run once when the bot has connected to Discord successfully."""
         logger.info("MutinyBot is online and ready to disrupt!")
+
+        # Publish commands in guild scope for immediate availability and no duplication.
+        if not self._app_commands_synced:
+            if not self.guilds:
+                logger.info("No guilds available for command sync")
+            for guild in self.guilds:
+                try:
+                    self.tree.clear_commands(guild=guild)
+                    self.tree.copy_global_to(guild=guild)
+                    synced = await self.tree.sync(guild=guild)
+                    logger.info(
+                        "Synced %d guild-scoped app commands to '%s' (%s)",
+                        len(synced),
+                        guild.name,
+                        guild.id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Guild app command sync failed for '%s' (%s)",
+                        guild.name,
+                        guild.id,
+                    )
+
+            # Remove any legacy global commands to prevent duplicate listings.
+            try:
+                self.tree.clear_commands(guild=None)
+                cleared = await self.tree.sync()
+                logger.info("Cleared global app commands (remaining global: %d)", len(cleared))
+            except Exception:
+                logger.exception("Global app command cleanup failed")
+
+            self._app_commands_synced = True
+
+        # One-time palace initialization check
+        palace_cog: Any = self.get_cog("MemoryPalaceCog")
+        if palace_cog and hasattr(palace_cog, 'palace_path'):
+            logger.info("MemPalace initialized at %s", palace_cog.palace_path)
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError) -> None:
         """Handle slash command errors gracefully."""

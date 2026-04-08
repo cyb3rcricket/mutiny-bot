@@ -1,6 +1,8 @@
 """Monitoring cog: slash commands for jobs, history, and status."""
 
 import asyncio
+import hashlib
+import importlib
 import os
 import platform
 import shutil
@@ -404,6 +406,7 @@ class MonitoringCog(commands.Cog):
 
     def __init__(self, bot) -> None:
         self.bot = bot
+        self.palace_path = os.path.expanduser("~/.mutiny/palace")
 
     @staticmethod
     def _has_admin_permissions(interaction: discord.Interaction) -> bool:
@@ -437,6 +440,88 @@ class MonitoringCog(commands.Cog):
         user_id = str(interaction.user.id)
         await self.bot.db_manager.clear_chat_history(user_id)
         await interaction.response.send_message("Chat history has been wiped and started fresh.")
+
+    @staticmethod
+    def _memory_text(item: Any) -> str:
+        """Normalize MemPalace search results to displayable text."""
+        if isinstance(item, str):
+            return item
+        if isinstance(item, dict):
+            value = item.get("content") or item.get("text") or item.get("memory")
+            if value:
+                return str(value)
+            return str(item)
+        return str(item)
+
+    @staticmethod
+    def _safe_guild_name(interaction: discord.Interaction) -> str:
+        if interaction.guild and interaction.guild.name:
+            return interaction.guild.name
+        return "DirectMessages"
+
+    @staticmethod
+    def _safe_room_name(interaction: discord.Interaction) -> str:
+        if interaction.channel:
+            channel_name = getattr(interaction.channel, "name", None)
+            if channel_name:
+                return str(channel_name)
+        return "direct-message"
+
+    @staticmethod
+    def _get_mempalace_search() -> Any:
+        module = importlib.import_module("mempalace.searcher")
+        return getattr(module, "search_memories")
+
+    @staticmethod
+    def _get_mempalace_add_drawer() -> Any:
+        import inspect
+        import os
+        module = importlib.import_module("mempalace.mcp_server")
+        tool_add_drawer = getattr(module, "tool_add_drawer")
+        _ADD_DRAWER_PARAMS = set(inspect.signature(tool_add_drawer).parameters)
+
+        def _add_drawer(*, palace_path: str, wing: str, room: str, content: str, metadata: dict[str, Any]) -> None:
+            # Keep custom palace target working on MemPalace variants that read path from env.
+            os.environ["MEMPALACE_PALACE_PATH"] = palace_path
+
+            if "palace_path" in _ADD_DRAWER_PARAMS:
+                kwargs: dict[str, Any] = {
+                    "palace_path": palace_path,
+                    "wing": wing,
+                    "room": room,
+                    "content": content,
+                }
+                if "metadata" in _ADD_DRAWER_PARAMS:
+                    kwargs["metadata"] = metadata
+                result = tool_add_drawer(**kwargs)
+            else:
+                result = tool_add_drawer(
+                    wing=wing,
+                    room=room,
+                    content=content,
+                    source_file=str(metadata.get("table", "")),
+                    added_by="bot",
+                )
+
+            if isinstance(result, dict) and result.get("success") is False:
+                if result.get("reason") == "duplicate":
+                    return
+                raise RuntimeError(result.get("error") or "Failed to add drawer")
+
+        return _add_drawer
+
+    def _search_memories(self, query: str, wing: str, room: Optional[str] = None) -> list[Any]:
+        search_fn = self._get_mempalace_search()
+        kwargs: dict[str, Any] = {
+            "palace_path": self.palace_path,
+            "wing": wing,
+        }
+        if room:
+            kwargs["room"] = room
+        results = search_fn(query, **kwargs)
+        if isinstance(results, list):
+            return results
+        return []
 
     @app_commands.command(name="botstatus", description="Show bot status ⚙️")
     @app_commands.default_permissions(manage_guild=True)
@@ -670,8 +755,31 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        await self.bot.db_manager.save_fact(fact)
-        await interaction.response.send_message(f"✅ Fact saved: {fact}")
+        wing = self._safe_guild_name(interaction)
+        room = "remembered-facts"
+        metadata = {
+            "author": interaction.user.name if interaction.user else "unknown",
+            "channel": self._safe_room_name(interaction),
+            "timestamp": datetime.utcnow().isoformat(),
+            "guild": wing,
+            "type": "fact",
+        }
+
+        try:
+            add_drawer = self._get_mempalace_add_drawer()
+            add_drawer(
+                palace_path=self.palace_path,
+                wing=wing,
+                room=room,
+                content=fact,
+                metadata=metadata,
+            )
+            await interaction.response.send_message(f"✅ Fact saved: {fact}")
+        except Exception:
+            await interaction.response.send_message(
+                "❌ Failed to save fact.",
+                ephemeral=True,
+            )
 
     @app_commands.command(name="recall", description="Show all saved facts 📚")
     @app_commands.default_permissions(manage_guild=True)
@@ -687,7 +795,14 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        facts = await self.bot.db_manager.get_all_facts()
+        wing = self._safe_guild_name(interaction)
+        facts: list[str] = []
+        try:
+            fact_items = self._search_memories(query="", wing=wing, room="remembered-facts")
+            facts = [self._memory_text(item) for item in fact_items if self._memory_text(item).strip()]
+        except Exception:
+            facts = []
+
         embed = discord.Embed(title="📚 Saved Facts", color=0x3498db)
         if not facts:
             embed.description = "No facts saved yet."
@@ -1047,6 +1162,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
+        # Acknowledge immediately to avoid Discord interaction timeout (10062).
+        await interaction.response.defer()
+
         snapshot = collect_local_system_snapshot()
         insight = generate_daily_insight(snapshot)
 
@@ -1057,7 +1175,7 @@ class MonitoringCog(commands.Cog):
         )
         embed.set_footer(text="Mutiny Bot • Local Only")
 
-        await interaction.response.send_message(embed=embed)
+        await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="explain-error", description="Get LLM explanation for an error message 🐛")
     @app_commands.default_permissions(manage_guild=True)
@@ -1131,17 +1249,30 @@ class MonitoringCog(commands.Cog):
 
         await interaction.response.defer()
 
-        # Get facts and recent history
-        facts = await self.bot.db_manager.get_all_facts()
-        history = await self.bot.db_manager.get_chat_history(limit=20)
+        wing = self._safe_guild_name(interaction)
+        room = self._safe_room_name(interaction)
+
+        # Get facts and channel history from MemPalace.
+        try:
+            fact_items = self._search_memories(query=question, wing=wing, room="remembered-facts")
+        except Exception:
+            fact_items = []
+
+        try:
+            history_items = self._search_memories(query=question, wing=wing, room=room)
+        except Exception:
+            history_items = []
+
+        facts = [self._memory_text(item) for item in fact_items if self._memory_text(item).strip()]
+        history = [self._memory_text(item) for item in history_items if self._memory_text(item).strip()]
         
         # Build context
         context_parts = []
         if facts:
-            context_parts.append("**Remembered Facts:**\n" + "\n".join(f"- {fact}" for fact in facts))
+            context_parts.append("**Remembered Facts:**\n" + "\n".join(f"- {fact}" for fact in facts[:20]))
         
         if history:
-            history_text = "\n".join(f"{item['role']}: {item['content'][:100]}" for item in history)
+            history_text = "\n".join(f"memory: {item[:100]}" for item in history[:20])
             context_parts.append("**Recent Chat History:**\n" + history_text)
         
         context = "\n\n".join(context_parts) if context_parts else "No facts or history available."
@@ -1539,8 +1670,21 @@ class MonitoringCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            await self.bot.tree.sync()
-            await interaction.followup.send("✅ All slash commands have been synced with Discord!", ephemeral=True)
+            guild = interaction.guild
+            if guild is None:
+                await interaction.followup.send(
+                    "❌ This command can only be used in a server.",
+                    ephemeral=True,
+                )
+                return
+
+            self.bot.tree.clear_commands(guild=guild)
+            self.bot.tree.copy_global_to(guild=guild)
+            synced = await self.bot.tree.sync(guild=guild)
+            await interaction.followup.send(
+                f"✅ Synced {len(synced)} slash commands to this server without duplicates.",
+                ephemeral=True,
+            )
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to sync commands: {str(e)}", ephemeral=True)
 

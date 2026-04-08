@@ -91,6 +91,16 @@ async def execute_and_broadcast(tool_name: str) -> str:
         if result_text.startswith("Error:"):
             return result_text
 
+        # For morning briefing, prepend memory context
+        if tool_name == "get_morning_briefing":
+            scheduler = CURRENT_TOOL_SCHEDULER.get()
+            if scheduler and hasattr(scheduler, 'bot'):
+                bot = scheduler.bot
+                palace_cog = bot.get_cog("MemoryPalaceCog")
+                if palace_cog:
+                    memory_context = palace_cog.get_memory_context("morning briefing")
+                    result_text = memory_context + "\n\n" + result_text
+
         await _enqueue_broadcast(f"🤖 **AUTOMATED TASK: {tool_name}**\n\n{result_text}")
         return f"Successfully executed and queued broadcast for '{tool_name}'."
     except Exception:
