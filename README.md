@@ -9,7 +9,9 @@ Mutiny Bot is a Discord bot built with `discord.py` that uses local Ollama model
 - SQLite-backed chat history and bot configuration
 - Scheduled automations via APScheduler
 - Local morning briefing tool with no external API calls
+- RSS-based news monitoring with AI-powered article summaries
 - Broadcast queue for pushing messages to a configured Discord channel
+- Memory Palace integration for persistent deduplication and knowledge storage
 
 ## Requirements
 
@@ -89,7 +91,14 @@ All slash commands require Manage Server permission and must be used in the desi
 | `/jobs` | List all active scheduled jobs with their status | `/jobs` |
 | `/quick-run <tool-name>` | Execute an AI tool immediately | `/quick-run get_morning_briefing` |
 | `/snooze-job <job-id> <hours>` | Temporarily pause a scheduled job | `/snooze-job 123 24` |
+### 📰 News Monitoring
 
+| Command | Description | Example |
+|---------|-------------|----------|
+| `/add_news_monitor <channel> <name> <search_query> [frequency] [time]` | Create a scheduled news monitor for RSS articles | `/add_news_monitor #news ai-news "artificial intelligence" daily 08:00` |
+| `/list_news_monitors` | Display all active news monitors and their schedules | `/list_news_monitors` |
+| `/remove_news_monitor <name>` | Delete a news monitor by name | `/remove_news_monitor ai-news` |
+| `/run_news_monitor <name>` | Manually trigger a news monitor to fetch articles immediately | `/run_news_monitor ai-news` |
 ### 🖥️ System & Infrastructure Monitoring
 
 | Command | Description | Example |
@@ -143,6 +152,7 @@ These tools can be called programmatically or scheduled:
 - `schedule_daily_automation` - Schedule a registered tool to run daily at a specific time
 - `list_active_automations` - List all currently active scheduled automations
 - `stop_automation` - Stop and remove a scheduled automation by job ID
+- `execute_news_monitor` - Execute a news monitor job to fetch, summarize, and broadcast articles
 
 ## Notes
 

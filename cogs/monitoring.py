@@ -1598,7 +1598,11 @@ class MonitoringCog(commands.Cog):
             value=(
                 "**/jobs** - List active scheduled jobs\n"
                 "**/schedule <task> <time>** - Schedule a recurring task\n"
-                "**/snooze-job <job-id> <hours>** - Pause a job for specified hours"
+                "**/snooze-job <job-id> <hours>** - Pause a job for specified hours\n"
+                "**/add_news_monitor <channel> <name> <search_query> [frequency] [time]** - Add a news monitor job\n"
+                "**/list_news_monitors** - List all active news monitors\n"
+                "**/remove_news_monitor <name>** - Remove a news monitor job\n"
+                "**/run_news_monitor <name>** - Manually run a news monitor job"
             ),
             inline=False
         )
