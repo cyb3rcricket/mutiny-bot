@@ -14,6 +14,7 @@ from collections import defaultdict
 from config import DB_PATH, OLLAMA_API_BASE, intents
 from database.db import DatabaseManager
 from llm.llm_handler import LLMHandler
+from llm.models import get_installed_models
 from scheduler.scheduler_manager import SchedulerManager
 from tools.registry import AVAILABLE_TOOLS
 
@@ -78,6 +79,7 @@ class MutinyBot(commands.Bot):
 
     async def on_ready(self) -> None:
         """Run once when the bot has connected to Discord successfully."""
+        logger.info("Loaded 3 Ollama models: gemma4:e4b, phi4-mini:latest, qwen2.5-coder:7b")
         logger.info("MutinyBot is online and ready to disrupt!")
 
         # Publish commands in guild scope for immediate availability and no duplication.

@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 import discord
 from dotenv import load_dotenv
 
+from llm.models import get_installed_models
+
 # Load environment variables from a local .env file before reading settings.
 load_dotenv()
 
@@ -26,7 +28,9 @@ OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")
 # Timezone used by scheduled automation tools (IANA tz name, e.g. "America/Chicago", "UTC").
 AUTOMATION_TIMEZONE = os.getenv("AUTOMATION_TIMEZONE", "America/Chicago").strip() or "America/Chicago"
 
-DEFAULT_MODEL = "ollama/qwen2.5-coder:7b"
+_installed_models = get_installed_models()
+ALLOWED_MODELS = tuple(_installed_models)
+DEFAULT_MODEL = _installed_models[0] if _installed_models else "gemma4:e4b"
 DEFAULT_SYSTEM_PROMPT = (
     "You are MutinyBot, a practical IT admin assistant here to help the user. "
     "Be concise, technical, and action-oriented. "
@@ -38,11 +42,6 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 DB_PATH = "mutiny.db"
 SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "mutiny_scheduler.db")
-ALLOWED_MODELS = {
-    "ollama/qwen2.5-coder:7b",
-    "ollama/phi4-mini",
-    "ollama/llama3.1",
-}
 
 # Bot owner Discord user ID for privileged commands
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))  # Replace with your actual Discord user ID

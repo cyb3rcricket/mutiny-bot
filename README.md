@@ -1,41 +1,54 @@
-# Mutiny Bot
+# **MUTINY BOT**
 
-Mutiny Bot is a Discord bot built with `discord.py` that uses local Ollama models through `litellm` for chat and automation. It keeps a small SQLite database for chat history and configuration, exposes slash commands for model/personality/status management, and includes AI tools for scheduling and generating a local morning briefing.
+You are not here to rent intelligence from somebody else's server farm.
+You are here to take it back.
 
-## Features
+Mutiny Bot is a Discord operations bot for people who want control, speed, and privacy without compromise. It runs on local Ollama models through `litellm`, drives real automation with slash commands, and keeps your memory and configuration in your own stack.
 
-- Chat responses powered by local Ollama models only
-- Slash commands for switching models, updating the system prompt, and viewing status
-- SQLite-backed chat history and bot configuration
-- Scheduled automations via APScheduler
-- Local morning briefing tool with no external API calls
-- RSS-based news monitoring with AI-powered article summaries
-- Broadcast queue for pushing messages to a configured Discord channel
-- Memory Palace integration for persistent deduplication and knowledge storage
+No cloud dependency for inference. No mystery pipeline. No black box decisions about your data. You run it. You own it. You ship it.
 
-## Requirements
+## Key Features
 
-- Python 3.9 or newer
-- A Discord bot application and token
-- A running local Ollama server
-- At least one allowed Ollama model pulled locally
+- **Local Ollama models only** for AI inference. No remote LLM provider required.
+- **Dynamic model detection** via installed Ollama models, with canonical support for `gemma4:e4b`, `phi4-mini:latest`, and `qwen2.5-coder:7b`.
+- **Privacy-first architecture**: model inference and memory processing happen on your machine.
+- **SQLite-backed state** for chat history, bot configuration, and operational persistence.
+- **MemPalace-powered long-term memory** for deduplication and semantic recall (vector memory backed by ChromaDB under the hood).
+- **APScheduler + SQLAlchemy job persistence** for durable, recurring automations.
+- **RSS news monitoring pipeline** with AI summarization and memory-based deduplication.
+- **Broadcast queue system** to safely push scheduled outputs into Discord channels.
+- **System operations command surface** for logs, Docker visibility, host checks, and health insight.
+- **AI utility workflows** for script generation, error explanation, brainstorming, and structured tooling.
+- **Fully local runtime footprint** for model work and memory storage, designed for teams that do not want to hand their internal context to the cloud.
 
-## Setup
+## Quick Start / Installation
 
-1. Create and activate a virtual environment:
+### Requirements
+
+- Python 3.9+
+- A Discord bot token
+- A running local Ollama daemon
+- Recommended local models:
+  - `gemma4:e4b`
+  - `phi4-mini:latest`
+  - `qwen2.5-coder:7b`
+
+### Install
+
+1. Create and activate a virtual environment.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 ```
 
-2. Install the dependencies:
+2. Install dependencies.
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Create a `.env` file in the project root with at least:
+3. Create `.env` in the project root.
 
 ```env
 DISCORD_BOT_TOKEN=your_discord_bot_token
@@ -44,118 +57,123 @@ OLLAMA_API_BASE=http://127.0.0.1:11434
 SCHEDULER_DB_PATH=mutiny_scheduler.db
 ```
 
-`BROADCAST_CHANNEL_ID` is optional, but required if you want the scheduler to post automated results into a Discord channel.
+`BROADCAST_CHANNEL_ID` is optional unless you want scheduled outputs posted to a Discord channel.
 `SCHEDULER_DB_PATH` is optional and defaults to `mutiny_scheduler.db`.
 
-4. Start Ollama locally and make sure one of the allowed models exists:
+4. Pull the current canonical models.
 
 ```bash
+ollama pull gemma4:e4b
+ollama pull phi4-mini:latest
 ollama pull qwen2.5-coder:7b
 ```
 
-The bot only accepts these model IDs:
-
-- `ollama/qwen2.5-coder:7b`
-- `ollama/phi4-mini`
-- `ollama/llama3.1`
-
-## Run
-
-From the repository root, run:
+5. Run the bot.
 
 ```bash
 source .venv/bin/activate
 python mutiny_bot.py
 ```
 
-The bot will create or update its local SQLite database on first launch, sync slash commands, and connect to Discord with the token from `.env`.
+On first launch, Mutiny Bot initializes local databases, loads tools, syncs slash commands, and starts scheduler services.
 
-## Tests
-
-Run the built-in unit tests from the repository root:
+### Run Tests
 
 ```bash
 source .venv/bin/activate
 python -m unittest discover -s tests -v
 ```
 
-## Available Slash Commands
+## How To Use The Main Commands
 
-All slash commands require Manage Server permission and must be used in the designated monitoring channel. Commands have a 3-second cooldown to prevent spam.
+All slash commands require **Manage Server** permission unless noted otherwise. A global cooldown of 3 seconds is enforced.
 
-### 🤖 Automation & Scheduling
+### Core Automation
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/schedule <task> <time>` | Schedule a recurring task to run automatically | `/schedule "daily backup" "daily at 02:00"` |
-| `/jobs` | List all active scheduled jobs with their status | `/jobs` |
-| `/quick-run <tool-name>` | Execute an AI tool immediately | `/quick-run get_morning_briefing` |
-| `/snooze-job <job-id> <hours>` | Temporarily pause a scheduled job | `/snooze-job 123 24` |
-### 📰 News Monitoring
+| Command | What it does | Example |
+|---|---|---|
+| `/schedule <task> <time>` | Schedule a recurring task | `/schedule "daily backup" "daily at 02:00"` |
+| `/jobs` | List active scheduled jobs | `/jobs` |
+| `/snooze-job <job-id> <hours>` | Pause a scheduled job temporarily | `/snooze-job 123 24` |
+| `/quick-run <tool-name>` | Execute a tool immediately (owner only) | `/quick-run get_morning_briefing` |
 
-| Command | Description | Example |
-|---------|-------------|----------|
-| `/add_news_monitor <channel> <name> <search_query> [frequency] [time]` | Create a scheduled news monitor for RSS articles | `/add_news_monitor #news ai-news "artificial intelligence" daily 08:00` |
-| `/list_news_monitors` | Display all active news monitors and their schedules | `/list_news_monitors` |
-| `/remove_news_monitor <name>` | Delete a news monitor by name | `/remove_news_monitor ai-news` |
-| `/run_news_monitor <name>` | Manually trigger a news monitor to fetch articles immediately | `/run_news_monitor ai-news` |
-### 🖥️ System & Infrastructure Monitoring
+### News Monitoring
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/system` | Display comprehensive system information (CPU, RAM, disk usage) | `/system` |
-| `/docker` | List all running Docker containers with resource usage | `/docker` |
-| `/ping <host>` | Test network connectivity and measure latency | `/ping google.com` |
-| `/logs <service>` | View recent log entries for system services | `/logs syslog` |
+| Command | What it does | Example |
+|---|---|---|
+| `/add_news_monitor <channel> <name> <search_query> [frequency] [time]` | Create a scheduled RSS news monitor | `/add_news_monitor #news ai-news "artificial intelligence" daily 08:00` |
+| `/list_news_monitors` | List active news monitors | `/list_news_monitors` |
+| `/remove_news_monitor <name>` | Remove a news monitor | `/remove_news_monitor ai-news` |
+| `/run_news_monitor <name>` | Trigger a news monitor immediately | `/run_news_monitor ai-news` |
 
-### 📚 Memory & Knowledge Tools
+### System + Memory + AI Operations
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/remember <fact>` | Save important information for future reference | `/remember "Server backup runs at 2 AM daily"` |
-| `/recall` | Display all saved facts and knowledge | `/recall` |
-| `/clear-history` | Clear chat history for the current user | `/clear-history` |
-| `/reset` | Reset chat history for the current user | `/reset` |
-| `/ask-notes <question>` | Query saved facts and chat history using AI | `/ask-notes "What are our backup schedules?"` |
+| Command | What it does | Example |
+|---|---|---|
+| `/system` | Show host system health | `/system` |
+| `/docker` | List running Docker containers | `/docker` |
+| `/logs <service>` | Show recent service logs | `/logs syslog` |
+| `/ping <host>` | Run connectivity/latency check | `/ping google.com` |
+| `/remember <fact>` | Persist a fact to memory | `/remember "Server backup runs at 2 AM daily"` |
+| `/recall` | Recall saved facts | `/recall` |
+| `/ask-notes <question>` | Ask AI over memory + chat context | `/ask-notes "What are our backup schedules?"` |
+| `/generate-script <task>` | Generate a bash script | `/generate-script "backup database to S3"` |
+| `/explain-error <error_message>` | Explain and debug an error | `/explain-error "ModuleNotFoundError: No module named requests"` |
+| `/brainstorm <idea>` | Generate practical ideas | `/brainstorm "new Discord bot features"` |
+| `/daily-insight` | Get a daily AI ops insight | `/daily-insight` |
+| `/clear-history` | Clear your chat history | `/clear-history` |
+| `/reset` | Reset your chat context | `/reset` |
 
-### 🎨 Creative & Productivity
+### Model + Bot Control
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/generate-script <task>` | Generate bash scripts using AI assistance | `/generate-script "backup database to S3"` |
-| `/explain-error <error_message>` | Get AI-powered explanations for error messages | `/explain-error "ModuleNotFoundError: No module named 'requests'"` |
-| `/brainstorm <idea>` | Generate creative ideas and solutions using AI | `/brainstorm "new Discord bot features"` |
-| `/daily-insight` | Get a fun, AI-generated system health insight | `/daily-insight` |
+| Command | What it does | Example |
+|---|---|---|
+| `/model <model_name>` | Set active model | `/model phi4-mini:latest` |
+| `/switch-model <model_name>` | Switch active model (autocomplete enabled) | `/switch-model phi4-mini:latest` |
+| `/personality <prompt_text>` | Set the system prompt | `/personality You are a practical IT assistant...` |
+| `/status` | Show model, installed models, personality snippet, DB size | `/status` |
+| `/botstatus` | Show uptime, active jobs, and history counts | `/botstatus` |
+| `/sync-commands` | Resync app commands (owner only) | `/sync-commands` |
+| `/post-commands [channel]` | Publish command reference (owner only) | `/post-commands #general` |
+| `/restart-bot` | Restart bot with confirmation (owner only) | `/restart-bot` |
+| `/list-tools` | List registered AI tools (owner only) | `/list-tools` |
+| `/help` | Show command help | `/help` |
 
-### ⚙️ Bot Management
+### AI Tools (Function Calling)
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/botstatus` | Show bot status, uptime, and configuration | `/botstatus` |
-| `/switch-model <model_name>` | Change the active AI model | `/switch-model ollama/phi4-mini` |
-| `/restart-bot` | Restart the bot with confirmation (owner only) | `/restart-bot` |
-| `/sync-commands` | Sync slash commands with Discord (owner only) | `/sync-commands` |
-
-### 🛠️ Utilities
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `/list-tools` | Display all available AI tools with descriptions | `/list-tools` |
-| `/help` | Show comprehensive help for all commands | `/help` |
-| `/post-commands [channel]` | Post full command reference to a channel (owner only) | `/post-commands #general` |
-
-### 🔧 AI Tools (Function Calling)
-
-These tools can be called programmatically or scheduled:
+These tools can be invoked by the model or scheduled:
 
 - `get_morning_briefing` - Generate a local morning operations briefing
-- `schedule_daily_automation` - Schedule a registered tool to run daily at a specific time
-- `list_active_automations` - List all currently active scheduled automations
-- `stop_automation` - Stop and remove a scheduled automation by job ID
-- `execute_news_monitor` - Execute a news monitor job to fetch, summarize, and broadcast articles
+- `schedule_daily_automation` - Schedule a tool at a daily time
+- `list_active_automations` - List active scheduled automations
+- `stop_automation` - Stop a scheduled automation by job ID
+- `execute_news_monitor` - Fetch, summarize, and broadcast monitored news
 
-## Notes
+## Current Status
 
-- The bot is designed for local inference only. It passes `OLLAMA_API_BASE` into `litellm` requests and uses an allowlist of `ollama/` model IDs.
-- If `DISCORD_BOT_TOKEN` is missing, the bot exits immediately at startup.
-- Conversation history and configuration are stored in a local SQLite database.
+Mutiny Bot is live with dynamic local model detection and currently running these installed Ollama models:
+
+- `gemma4:e4b`
+- `phi4-mini:latest`
+- `qwen2.5-coder:7b`
+
+Startup log confirms:
+
+`Loaded 3 Ollama models: gemma4:e4b, phi4-mini:latest, qwen2.5-coder:7b`
+
+### Operational Notes
+
+- If `DISCORD_BOT_TOKEN` is missing or empty, startup validation will fail and the bot will not launch.
+- Conversation history and configuration are persisted locally in SQLite.
+- Inference is local-only through Ollama via `litellm` using your configured `OLLAMA_API_BASE`.
+
+## Closing Statement
+
+Build tools that answer to you.
+Run models you can inspect.
+Keep your memory local.
+Automate the work that burns your time.
+
+This is not a demo of what might be possible someday.
+This is already yours.
+Take it further.

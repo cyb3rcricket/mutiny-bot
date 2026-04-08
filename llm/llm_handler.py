@@ -43,6 +43,10 @@ class LLMHandler:
         tools: Optional[list] = None,
     ) -> str:
         """Generate a response from the LLM, handling tool calls if present."""
+        # Ensure model has provider prefix for litellm
+        if not model.startswith("ollama/"):
+            model = f"ollama/{model}"
+            
         completion_kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -182,6 +186,10 @@ class LLMHandler:
 
         Returns a short one-sentence summary using the same style as other LLM calls.
         """
+        # Ensure model has provider prefix for litellm
+        if not model.startswith("ollama/"):
+            model = f"ollama/{model}"
+            
         # Exclude the last 8 messages to keep the summary focused on earlier context
         history_to_summarize = (
             full_history[:-MAX_TAIL_MESSAGES] if len(full_history) > MAX_TAIL_MESSAGES else []

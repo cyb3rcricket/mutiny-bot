@@ -19,6 +19,7 @@ from discord import ui
 from typing import cast, Any, Optional
 
 from config import MONITORING_CHANNEL_ID, LOG_PATHS, ALLOWED_MODELS, BOT_OWNER_ID
+from llm.models import get_installed_models
 from tools.registry import AVAILABLE_TOOLS, TOOL_SCHEMAS
 from tools.news_monitor import get_fresh_news
 from tools.scheduler_manager import execute_and_broadcast
@@ -61,6 +62,11 @@ def parse_schedule_time(time_str: str):
             pass
     
     raise ValueError(f"Unsupported time format: {time_str}. Try 'daily at 02:00', 'hourly', 'every 30 minutes', or 'weekly on monday at 02:00'")
+
+
+async def switch_model_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    models = get_installed_models()
+    return [app_commands.Choice(name=model, value=model) for model in models if current.lower() in model.lower()]
 
 
 def collect_local_system_snapshot() -> dict[str, Any]:
@@ -1036,6 +1042,7 @@ class MonitoringCog(commands.Cog):
         await interaction.followup.send(embed=embed)
 
     @app_commands.command(name="switch-model", description="Switch the AI model 🤖")
+    @app_commands.autocomplete(model_name=switch_model_autocomplete)
     @app_commands.default_permissions(manage_guild=True)
     async def switch_model(self, interaction: discord.Interaction, model_name: str) -> None:
         if not self._check_channel(interaction):
@@ -1045,13 +1052,6 @@ class MonitoringCog(commands.Cog):
         if not self._has_admin_permissions(interaction):
             await interaction.response.send_message(
                 "You need Manage Server permission to switch models.",
-                ephemeral=True,
-            )
-            return
-
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can switch AI models.",
                 ephemeral=True,
             )
             return

@@ -9,6 +9,8 @@ import litellm
 from mempalace.mcp_server import tool_add_drawer
 from mempalace.searcher import search_memories
 
+from config import DEFAULT_MODEL
+
 
 async def get_fresh_news(search_query: str, dedup_room: str, palace_path: str) -> List[Dict[str, Any]]:
     """Fetch Google News RSS for search_query (last 24h), dedup via MemPalace, return new articles."""
@@ -63,8 +65,12 @@ async def execute_news_monitor(job_data: dict) -> None:
         blurbs = []
         for article in articles:
             prompt = f"Summarize this news article in 1-2 sentences: {article['title']} - {article['summary']}"
+            # Ensure model has provider prefix for litellm
+            model_name = DEFAULT_MODEL
+            if not model_name.startswith("ollama/"):
+                model_name = f"ollama/{model_name}"
             response = await litellm.acompletion(
-                model="ollama/qwen2.5-coder:7b",
+                model=model_name,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=100
             )

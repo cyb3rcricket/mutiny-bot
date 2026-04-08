@@ -7,6 +7,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from config import ALLOWED_MODELS
+from llm.models import get_installed_models
 
 
 MAX_PERSONALITY_SNIPPET_CHARS = 300
@@ -32,24 +33,8 @@ class AdminCog(commands.Cog):
 
     @app_commands.command(name="model", description="Switch MutinyBot's AI model")
     @app_commands.default_permissions(manage_guild=True)
-    @app_commands.choices(
-        model_choice=[
-            app_commands.Choice(
-                name="ollama/qwen2.5-coder:7b",
-                value="ollama/qwen2.5-coder:7b",
-            ),
-            app_commands.Choice(
-                name="ollama/phi4-mini",
-                value="ollama/phi4-mini",
-            ),
-            app_commands.Choice(
-                name="ollama/llama3.1",
-                value="ollama/llama3.1",
-            ),
-        ]
-    )
     async def model_command(
-        self, interaction: discord.Interaction, model_choice: app_commands.Choice[str]
+        self, interaction: discord.Interaction, model_name: str
     ) -> None:
         """Switch the active local model used for replies."""
         if not self._has_admin_permissions(interaction):
@@ -59,9 +44,16 @@ class AdminCog(commands.Cog):
             )
             return
 
-        await self.bot.db_manager.update_config("model", model_choice.value)
+        if model_name not in ALLOWED_MODELS:
+            await interaction.response.send_message(
+                f"Invalid model. Allowed models: {', '.join(ALLOWED_MODELS)}",
+                ephemeral=True,
+            )
+            return
+
+        await self.bot.db_manager.update_config("model", model_name)
         await interaction.response.send_message(
-            f"Mainframe re-routed. Now using: {model_choice.value}"
+            f"Mainframe re-routed. Now using: {model_name}"
         )
 
     @app_commands.command(name="personality", description="Set MutinyBot system personality prompt")
@@ -109,6 +101,7 @@ class AdminCog(commands.Cog):
         active_model = await self.bot.db_manager.get_current_model()
         system_prompt = await self.bot.db_manager.get_system_prompt()
         db_size = self.bot.db_manager.format_db_size()
+        installed_models = get_installed_models()
 
         prompt_snippet = (
             system_prompt
@@ -121,6 +114,7 @@ class AdminCog(commands.Cog):
             color=discord.Color.blurple(),
         )
         embed.add_field(name="Active Model", value=active_model, inline=False)
+        embed.add_field(name="Installed Models", value=", ".join(installed_models), inline=False)
         embed.add_field(name="Personality Snippet", value=prompt_snippet, inline=False)
         embed.add_field(name="Database Size", value=db_size, inline=False)
         await interaction.response.send_message(embed=embed)
