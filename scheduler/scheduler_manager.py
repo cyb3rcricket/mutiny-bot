@@ -57,33 +57,34 @@ class SchedulerManager:
         if not broadcast:
             return
 
-        message_id, content = broadcast
+        message_id, content, channel_id = broadcast
         if not content:
             await self.bot.db_manager.delete_broadcast(message_id)
             return
 
-        channel = self.bot.get_channel(BROADCAST_CHANNEL_ID)
+        target_channel_id = channel_id if channel_id is not None else BROADCAST_CHANNEL_ID
+        channel = self.bot.get_channel(target_channel_id)
         if channel is None:
             try:
                 channel = await asyncio.wait_for(
-                    self.bot.fetch_channel(BROADCAST_CHANNEL_ID),
+                    self.bot.fetch_channel(target_channel_id),
                     timeout=5.0,
                 )
             except asyncio.TimeoutError:
                 self._logger.warning(
                     "Timed out fetching broadcast channel %s",
-                    BROADCAST_CHANNEL_ID,
+                    target_channel_id,
                 )
                 return
             except (discord.NotFound, discord.Forbidden):
                 self._logger.error(
                     "Broadcast channel %s is unavailable; dropping queued message id=%s",
-                    BROADCAST_CHANNEL_ID,
+                    target_channel_id,
                     message_id,
                 )
                 await self.bot.db_manager.delete_broadcast(message_id)
             except Exception:
-                self._logger.exception("Failed to fetch broadcast channel %s", BROADCAST_CHANNEL_ID)
+                self._logger.exception("Failed to fetch broadcast channel %s", target_channel_id)
                 return
 
         try:
@@ -92,7 +93,7 @@ class SchedulerManager:
             for chunk in chunks:
                 await sendable_channel.send(chunk)
         except Exception:
-            self._logger.exception("Failed to send broadcast message id=%s to channel %s", message_id, BROADCAST_CHANNEL_ID)
+            self._logger.exception("Failed to send broadcast message id=%s to channel %s", message_id, target_channel_id)
             # Drop the failed item so one bad payload does not permanently block the queue.
             await self.bot.db_manager.delete_broadcast(message_id)
             return

@@ -104,14 +104,13 @@ class MemoryPalaceCog(commands.Cog):
             wake_up = f"Palace has {status.get('total_drawers', 0)} drawers across {len(status.get('wings', {}))} wings."
 
             # Search relevant memories
-            search_kwargs = {
+            search_kwargs: dict[str, Any] = {
                 "palace_path": self.palace_path,
-                "query": user_input,
             }
             if guild:
                 search_kwargs["wing"] = guild
 
-            memories_result = self.search_memories(**search_kwargs)
+            memories_result = self.search_memories(user_input, **search_kwargs)
             memories = memories_result.get("results", [])
 
             # Format memories
@@ -136,6 +135,33 @@ class MemoryPalaceCog(commands.Cog):
         except Exception as e:
             self.logger.error(f"Error getting memory context: {e}")
             return "Memory context unavailable."
+
+    def is_article_posted(self, url: str, dedup_room: str, palace_path: str) -> bool:
+        """Check if article URL is already posted in MemPalace."""
+        try:
+            os.environ["MEMPALACE_PALACE_PATH"] = palace_path
+            results = self.search_memories(url, palace_path=palace_path, wing="news-monitor", room=dedup_room)
+            return bool(results)
+        except Exception as e:
+            self.logger.error(f"Error checking if article posted: {e}")
+            return False
+
+    def mark_article_posted(self, article_dict: dict, dedup_room: str, palace_path: str) -> None:
+        """Mark article as posted in MemPalace using its link."""
+        try:
+            os.environ["MEMPALACE_PALACE_PATH"] = palace_path
+            url = article_dict.get("link", "")
+            if not url:
+                self.logger.warning("No link in article_dict to mark as posted")
+                return
+            tool_add_drawer(
+                wing="news-monitor",
+                room=dedup_room,
+                content=url,
+                added_by="news_monitor"
+            )
+        except Exception as e:
+            self.logger.error(f"Error marking article posted: {e}")
 
 
 async def setup(bot: Any) -> None:

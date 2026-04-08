@@ -5,3 +5,4 @@ apscheduler
 litellm
 SQLAlchemy
 mempalace>=3.0.0
+feedparser>=6.0.0

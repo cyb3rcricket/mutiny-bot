@@ -117,6 +117,12 @@ class MutinyBot(commands.Bot):
         if palace_cog and hasattr(palace_cog, 'palace_path'):
             logger.info("MemPalace initialized at %s", palace_cog.palace_path)
 
+        # Count loaded news monitors
+        scheduler = self.scheduler_manager.scheduler
+        jobs = scheduler.get_jobs()
+        news_jobs = [job for job in jobs if job.id.startswith("news_monitor_")]
+        logger.info("News monitors loaded: %d active", len(news_jobs))
+
     async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError) -> None:
         """Handle slash command errors gracefully."""
         # Handle cooldown errors specifically

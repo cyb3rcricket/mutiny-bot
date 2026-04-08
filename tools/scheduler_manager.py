@@ -4,14 +4,17 @@ from contextvars import ContextVar, Token
 from datetime import datetime
 from inspect import isawaitable
 import logging
+import os
 import re
 from typing import Any, Optional, Tuple, cast
 
 import aiosqlite
+import litellm
 from apscheduler.jobstores.base import JobLookupError
 
 from config import AUTOMATION_TIMEZONE, BROADCAST_CHANNEL_ID, DB_PATH
 from tools.registry import AVAILABLE_TOOLS, ai_tool
+from tools.news_monitor import get_fresh_news
 
 CURRENT_TOOL_USER_ID: ContextVar[Optional[str]] = ContextVar("current_tool_user_id", default=None)
 CURRENT_TOOL_IS_ADMIN: ContextVar[bool] = ContextVar("current_tool_is_admin", default=False)
@@ -71,17 +74,17 @@ async def _invoke_registered_tool(tool_name: str) -> str:
     return str(result_text or "")
 
 
-async def _enqueue_broadcast(content: str) -> None:
+async def _enqueue_broadcast(content: str, channel_id: Optional[int] = None) -> None:
     """Queue one broadcast message for delivery by the scheduler broadcast loop."""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT INTO broadcast_queue (content) VALUES (?)",
-            (content,),
+            "INSERT INTO broadcast_queue (content, channel_id) VALUES (?, ?)",
+            (content, channel_id),
         )
         await db.commit()
 
 
-async def execute_and_broadcast(tool_name: str) -> str:
+async def execute_and_broadcast(tool_name: str, *args) -> str:
     """Execute a registered tool and enqueue its result for Discord broadcast."""
     if not isinstance(BROADCAST_CHANNEL_ID, int) or BROADCAST_CHANNEL_ID <= 0:
         return "Error: Invalid or unconfigured BROADCAST_CHANNEL_ID."

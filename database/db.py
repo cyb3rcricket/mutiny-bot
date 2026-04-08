@@ -90,6 +90,16 @@ class DatabaseManager:
             )
             """
         )
+        # Add channel_id column if it doesn't exist
+        try:
+            await db.execute(
+                """
+                ALTER TABLE broadcast_queue ADD COLUMN channel_id INTEGER
+                """
+            )
+        except aiosqlite.OperationalError:
+            # Column already exists
+            pass
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS facts (
@@ -209,11 +219,11 @@ class DatabaseManager:
 
         return [{"role": row[0], "content": row[1]} for row in rows]
 
-    async def get_next_broadcast(self) -> Optional[tuple[int, str]]:
+    async def get_next_broadcast(self) -> Optional[tuple[int, str, Optional[int]]]:
         """Get the next broadcast message from the queue."""
         db = await self._get_db()
         cursor = await db.execute(
-            "SELECT id, content FROM broadcast_queue ORDER BY id ASC LIMIT 1"
+            "SELECT id, content, channel_id FROM broadcast_queue ORDER BY id ASC LIMIT 1"
         )
         row = await cursor.fetchone()
 
@@ -222,7 +232,8 @@ class DatabaseManager:
 
         message_id = int(row[0])
         content = str(row[1] or "").strip()
-        return message_id, content
+        channel_id = row[2] if row[2] is not None else None
+        return message_id, content, channel_id
 
     async def delete_broadcast(self, message_id: int) -> None:
         """Delete a broadcast message from the queue."""

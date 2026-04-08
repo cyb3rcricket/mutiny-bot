@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import importlib
+import logging
 import os
 import platform
 import shutil
@@ -19,6 +20,8 @@ from typing import cast, Any, Optional
 
 from config import MONITORING_CHANNEL_ID, LOG_PATHS, ALLOWED_MODELS, BOT_OWNER_ID
 from tools.registry import AVAILABLE_TOOLS, TOOL_SCHEMAS
+from tools.news_monitor import get_fresh_news
+from tools.scheduler_manager import execute_and_broadcast
 
 
 def parse_schedule_time(time_str: str):
@@ -1653,6 +1656,21 @@ class MonitoringCog(commands.Cog):
         await cast(discord.TextChannel, target_channel).send(embed=embed)
         await interaction.response.send_message("✅ Full command list posted!", ephemeral=True)
 
+    async def post_news(self, channel_id: int, search_query: str, dedup_room: str, palace_path: str) -> None:
+        """Post fresh news articles to the specified channel."""
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            return
+        articles = await get_fresh_news(search_query, dedup_room, palace_path)
+        for article in articles:
+            embed = discord.Embed(
+                title=article['title'],
+                description=article['summary'],
+                url=article['link']
+            )
+            embed.add_field(name="Published", value=article['published'])
+            await channel.send(embed=embed)
+
     @app_commands.command(name="sync-commands", description="Sync slash commands with Discord 🔄")
     @app_commands.default_permissions(manage_guild=True)
     async def sync_commands(self, interaction: discord.Interaction) -> None:
@@ -1687,6 +1705,166 @@ class MonitoringCog(commands.Cog):
             )
         except Exception as e:
             await interaction.followup.send(f"❌ Failed to sync commands: {str(e)}", ephemeral=True)
+
+    @app_commands.command(name="add_news_monitor", description="Add a news monitor job 📰")
+    @app_commands.default_permissions(manage_guild=True)
+    async def add_news_monitor(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        name: str,
+        search_query: str,
+        frequency: str = "daily",
+        time: str = "08:00"
+    ) -> None:
+        if not self._check_channel(interaction):
+            await self._reject_unavailable(interaction)
+            return
+
+        if not self._has_admin_permissions(interaction):
+            await interaction.response.send_message(
+                "You need Manage Server permission to add news monitors.",
+                ephemeral=True,
+            )
+            return
+
+        time_str = f"{frequency} at {time}" if frequency == "daily" else frequency
+        trigger = parse_schedule_time(time_str)
+        if not trigger:
+            await interaction.response.send_message(
+                "Invalid frequency or time format.",
+                ephemeral=True,
+            )
+            return
+
+        palace_path = os.path.expanduser("~/.mutiny/palace")
+        dedup_room = name
+        scheduler = self.bot.scheduler_manager.scheduler
+        job_id = f"news_monitor_{name}"
+        if scheduler.get_job(job_id):
+            await interaction.response.send_message(
+                f"News monitor '{name}' already exists.",
+                ephemeral=True,
+            )
+            return
+
+        job_data = {
+            "name": name,
+            "search_query": search_query,
+            "channel_id": channel.id,
+            "palace_path": palace_path
+        }
+
+        scheduler.add_job(
+            "tools.news_monitor:execute_news_monitor",
+            trigger=trigger,
+            args=[job_data],
+            id=job_id,
+            name=f"News Monitor: {name}"
+        )
+        await interaction.response.send_message(
+            f"✅ Added news monitor '{name}' for '{search_query}' in {channel.mention}"
+        )
+
+    @app_commands.command(name="list_news_monitors", description="List news monitor jobs 📋")
+    @app_commands.default_permissions(manage_guild=True)
+    async def list_news_monitors(self, interaction: discord.Interaction) -> None:
+        if not self._check_channel(interaction):
+            await self._reject_unavailable(interaction)
+            return
+
+        if not self._has_admin_permissions(interaction):
+            await interaction.response.send_message(
+                "You need Manage Server permission to list news monitors.",
+                ephemeral=True,
+            )
+            return
+
+        scheduler = self.bot.scheduler_manager.scheduler
+        jobs = scheduler.get_jobs()
+        news_jobs = [job for job in jobs if job.id.startswith("news_monitor_")]
+
+        embed = discord.Embed(title="📰 News Monitors", color=0x3498db)
+        if not news_jobs:
+            embed.description = "No news monitors found."
+        else:
+            for job in news_jobs:
+                next_run = job.next_run_time
+                if next_run:
+                    next_run = next_run.strftime("%Y-%m-%d %H:%M")
+                else:
+                    next_run = "N/A"
+                embed.add_field(
+                    name=job.name,
+                    value=f"ID: {job.id}\nNext: {next_run}",
+                    inline=False
+                )
+        embed.set_footer(text="Mutiny Bot • Local Only")
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="remove_news_monitor", description="Remove a news monitor job 🗑️")
+    @app_commands.default_permissions(manage_guild=True)
+    async def remove_news_monitor(self, interaction: discord.Interaction, name: str) -> None:
+        if not self._check_channel(interaction):
+            await self._reject_unavailable(interaction)
+            return
+
+        if not self._has_admin_permissions(interaction):
+            await interaction.response.send_message(
+                "You need Manage Server permission to remove news monitors.",
+                ephemeral=True,
+            )
+            return
+
+        scheduler = self.bot.scheduler_manager.scheduler
+        job_id = f"news_monitor_{name}"
+        if scheduler.get_job(job_id):
+            scheduler.remove_job(job_id)
+            await interaction.response.send_message(f"✅ Removed news monitor '{name}'")
+        else:
+            await interaction.response.send_message(f"❌ No news monitor found with name '{name}'")
+
+    @app_commands.command(name="run_news_monitor", description="Manually run a news monitor job ▶️")
+    @app_commands.default_permissions(manage_guild=True)
+    async def run_news_monitor(self, interaction: discord.Interaction, name: str) -> None:
+        if not self._check_channel(interaction):
+            await self._reject_unavailable(interaction)
+            return
+
+        if not self._has_admin_permissions(interaction):
+            await interaction.response.send_message(
+                "You need Manage Server permission to run news monitors.",
+                ephemeral=True,
+            )
+            return
+
+        # Acknowledge quickly to avoid Discord interaction timeout (10062).
+        await interaction.response.defer(ephemeral=True)
+
+        scheduler = self.bot.scheduler_manager.scheduler
+        job_id = f"news_monitor_{name}"
+        job = scheduler.get_job(job_id)
+        if not job:
+            await interaction.followup.send(
+                f"❌ No news monitor found with name '{name}'",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            job_data = job.args[0]
+            from tools.news_monitor import execute_news_monitor
+            await execute_news_monitor(job_data)
+            await interaction.followup.send(
+                f"✅ Manually ran monitor '{name}' — check the channel",
+                ephemeral=True,
+            )
+        except Exception as e:
+            logging.exception("Error running news monitor '%s'", name)
+            await interaction.followup.send(
+                f"❌ Failed to run news monitor '{name}': {str(e)}",
+                ephemeral=True,
+            )
 
 
 async def setup(bot) -> None:
