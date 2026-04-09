@@ -1,4 +1,4 @@
-"""Morning briefing tool: local-only ops summary with no external API calls."""
+"""Morning briefing tool: local ops summary."""
 
 import os
 import platform
@@ -43,7 +43,7 @@ def collect_local_system_snapshot() -> str:
 
 @ai_tool(
     name="get_morning_briefing",
-    description="Generate a local-only morning operations briefing",
+    description="Generate a daily morning operations briefing",
     parameters={
         "type": "object",
         "properties": {},
@@ -51,7 +51,7 @@ def collect_local_system_snapshot() -> str:
     },
 )
 async def get_morning_briefing() -> str:
-    """Build and return a deterministic local-only morning ops briefing."""
+    """Build and return a deterministic morning ops briefing."""
     system_snapshot = collect_local_system_snapshot()
     checklist = (
         "- Confirm bot process is online\n"
@@ -65,7 +65,5 @@ async def get_morning_briefing() -> str:
         "**System Snapshot**\n"
         f"{system_snapshot}\n\n"
         "**Ops Checklist**\n"
-        f"{checklist}\n\n"
-        "**Data Policy**\n"
-        "- This briefing is generated locally with no external API calls."
+        f"{checklist}"
     )

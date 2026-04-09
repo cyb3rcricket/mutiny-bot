@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import inspect
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
@@ -56,8 +57,21 @@ def _table_names(conn: sqlite3.Connection) -> list[str]:
 
 
 def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
-    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-    return {str(r[1]) for r in rows}
+    rows = conn.execute("SELECT name FROM pragma_table_info(?)", (table_name,)).fetchall()
+    return {str(r[0]) for r in rows}
+
+
+def _quote_sqlite_identifier(identifier: str) -> str:
+    """Return a safely quoted SQLite identifier for trusted schema names."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", identifier or ""):
+        raise ValueError(f"Unsafe SQLite identifier: {identifier!r}")
+    return f'"{identifier}"'
+
+
+def _build_select_query(table_name: str, columns: list[str]) -> str:
+    quoted_table = _quote_sqlite_identifier(table_name)
+    quoted_columns = [_quote_sqlite_identifier(col) for col in columns]
+    return f"SELECT {', '.join(quoted_columns)} FROM {quoted_table} ORDER BY rowid ASC"  # nosec B608
 
 
 def _normalize_name(value: Any, fallback: str) -> str:
@@ -119,7 +133,7 @@ def _migrate_chat_history(conn: sqlite3.Connection, palace_path: str, graph: Any
         if col in columns:
             select_cols.append(col)
 
-    query = f"SELECT {', '.join(select_cols)} FROM chat_history ORDER BY rowid ASC"
+    query = _build_select_query("chat_history", select_cols)
     rows = conn.execute(query).fetchall()
 
     migrated = 0
@@ -190,7 +204,7 @@ def _migrate_notes(conn: sqlite3.Connection, palace_path: str, graph: Any, dry_r
             if optional in columns:
                 select_cols.append(optional)
 
-        query = f"SELECT {', '.join(select_cols)} FROM {table_name} ORDER BY rowid ASC"
+        query = _build_select_query(table_name, select_cols)
         rows = conn.execute(query).fetchall()
 
         for row in rows:

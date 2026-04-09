@@ -22,6 +22,17 @@ class MemoryPalaceCog(commands.Cog):
         self.logger = logging.getLogger("mutiny_bot.memory_palace")
         self.graph = self.knowledge_graph_cls(self.kg_db_path)
 
+    @staticmethod
+    def _has_admin_permissions(interaction: discord.Interaction) -> bool:
+        """Allow only users with Manage Guild or Administrator permissions."""
+        if not interaction.guild:
+            return False
+        if not isinstance(interaction.user, discord.Member):
+            return False
+
+        perms = interaction.user.guild_permissions
+        return bool(perms and (perms.manage_guild or perms.administrator))
+
     @commands.Cog.listener()
     async def on_message(self, message) -> None:
         """Store every non-bot message in MemPalace."""
@@ -55,6 +66,10 @@ class MemoryPalaceCog(commands.Cog):
     @app_commands.command(name="palace_status", description="Show MemPalace statistics")
     async def palace_status_command(self, interaction: discord.Interaction) -> None:
         """Display palace stats including wing count, total memories, and KG triples."""
+        if not MemoryPalaceCog._has_admin_permissions(interaction):
+            await interaction.response.send_message("You need Manage Server permission to view palace status.", ephemeral=True)
+            return
+
         try:
             self.logger.info("Executing palace_status command")
             # Set the palace path for tool_status
@@ -88,6 +103,10 @@ class MemoryPalaceCog(commands.Cog):
     @app_commands.command(name="wake_up", description="Get wake up context from MemPalace")
     async def wake_up_command(self, interaction: discord.Interaction) -> None:
         """Reply with wake up context injected into a short message."""
+        if not MemoryPalaceCog._has_admin_permissions(interaction):
+            await interaction.response.send_message("You need Manage Server permission to wake up the palace.", ephemeral=True)
+            return
+
         try:
             context = self.get_memory_context("wake up")
             message = f"Waking up with context: {context}"

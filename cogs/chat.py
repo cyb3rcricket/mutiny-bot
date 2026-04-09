@@ -15,6 +15,13 @@ from tools.registry import TOOL_SCHEMAS
 
 logger = logging.getLogger("mutiny_bot")
 
+# Hardened system prompt for all LLM calls
+SYSTEM_PROMPT = """You are MutinyBot, a direct, no-nonsense, zero-fluff Discord assistant built for Tommi.
+You have access to real tools: morning briefing, news monitors, Eisenhower task prioritization, MemPalace memory, and local Ollama models.
+Respond naturally and concisely. Never apologize for tool errors the user didn't see. Never say "simulate", "hypothetical", "educational purposes", "for security reasons", or "knowledge cutoff". Never mention 2023.
+When asked "what can you do?" or "what kinds of things can you do?", give a proud, specific list of your actual capabilities only.
+Always stay in character. No generic AI disclaimers ever."""
+
 # Discord has a 2000-character hard limit; keep a small safety margin.
 DISCORD_SAFE_MESSAGE_CHARS = 1950
 # Stream responses in smaller edits to keep updates snappy.
@@ -37,6 +44,33 @@ def is_automation_capabilities_question(user_text: str) -> bool:
         "which automations",
     )
     return any(marker in normalized for marker in capability_markers)
+
+
+def is_capabilities_question(user_text: str) -> bool:
+    """Detect questions about what the bot can do."""
+    normalized = (user_text or "").lower()
+    capability_markers = (
+        "what can you do",
+        "what kinds of things can you do",
+        "what are your capabilities",
+        "what do you do",
+        "what are you capable of",
+    )
+    return any(marker in normalized for marker in capability_markers)
+
+
+def build_capabilities_message() -> str:
+    """Return a proud, specific list of MutinyBot's actual capabilities."""
+    return (
+        "I'm MutinyBot, your direct Discord assistant with real tools:\n"
+        "• **Morning Briefing**: Local system snapshot and ops checklist.\n"
+        "• **News Monitoring**: Automated RSS feeds with deduplication.\n"
+        "• **Eisenhower Task Prioritization**: Classify tasks into urgent/important quadrants with concrete next steps.\n"
+        "• **MemPalace Memory**: Persistent knowledge graph for conversations and facts.\n"
+        "• **Local Ollama Models**: phi4-mini, gemma4:e4b, qwen2.5-coder for AI responses.\n"
+        "• **Automation Scheduling**: Daily jobs for briefings, news, and custom tools.\n\n"
+        "Ask me to prioritize tasks, get a briefing, or manage automations!"
+    )
 
 
 def build_automation_capabilities_message() -> str:
@@ -65,6 +99,28 @@ def _is_raw_json_response(text: str) -> bool:
         return isinstance(obj, dict) and not obj.get("type") and not obj.get("id")
     except (json.JSONDecodeError, ValueError):
         return False
+
+
+def _strip_simulation_disclaimers(text: str) -> str:
+    """Remove lingering simulation, hypothetical, or educational disclaimers from responses."""
+    import re
+    
+    # Patterns to remove
+    patterns = [
+        r'\*\*Important.*?\*\*.*?(?:simulation|hypothetical|educational).*?(?:\n|$)',
+        r'(?:^|\n)(?:Note|Disclaimer|Warning):.*?(?:simulation|hypothetical|educational).*?(?:\n|$)',
+        r'(?:^|\n).*?(?:for educational purposes only|simulation mode|hypothetical scenario).*?(?:\n|$)',
+        r'(?:^|\n).*?(?:no external API calls for security reasons).*?(?:\n|$)',
+        r'(?:^|\n).*?(?:code-block simulation|numbered steps for illustration).*?(?:\n|$)',
+    ]
+    
+    cleaned = text
+    for pattern in patterns:
+        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+    
+    # Remove extra blank lines
+    cleaned = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned)
+    return cleaned.strip()
 
 
 async def _convert_json_to_natural_language(
@@ -190,6 +246,15 @@ class ChatCog(commands.Cog):
 
         user_id = str(message.author.id)
 
+        if is_capabilities_question(message.content):
+            capability_reply = __import__("mutiny_bot").get_capabilities_response()
+            await self.bot.db_manager.insert_history_message(user_id=user_id, role="user", content=message.content)
+            await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=capability_reply)
+            for chunk in split_response_chunks(capability_reply):
+                await message.channel.send(chunk)
+            await self.bot.process_commands(message)
+            return
+
         if is_automation_capabilities_question(message.content):
             capability_reply = build_automation_capabilities_message()
             await self.bot.db_manager.insert_history_message(user_id=user_id, role="user", content=message.content)
@@ -208,18 +273,14 @@ class ChatCog(commands.Cog):
                 active_model = DEFAULT_MODEL
                 await self.bot.db_manager.update_config("model", DEFAULT_MODEL)
 
-            fetched_system_prompt = await self.bot.db_manager.get_system_prompt()
-            bot_config = {
-                "model": active_model,
-                "system_prompt": fetched_system_prompt,
-            }
             messages_for_ai = [
-                {"role": "system", "content": bot_config["system_prompt"]},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 *user_history,
             ]
 
             # Always pass tool schemas; the model decides when to call tools.
             tools = TOOL_SCHEMAS if TOOL_SCHEMAS else None
+            # We don't need 'tools' locally since LLMHandler handles it, but context setup uses it
             if tools:
                 context_tokens = set_tool_request_context(
                     user_id=user_id,
@@ -232,29 +293,17 @@ class ChatCog(commands.Cog):
                             ai_text = await self.bot.llm_handler.generate_response(
                                 model=active_model,
                                 messages=messages_for_ai,
-                                tools=tools,
+                                tools=tools
                             )
                 finally:
                     reset_tool_request_context(context_tokens)
 
                 await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=ai_text)
 
-                # Ensure tool-enabled AI responses are sent to the Discord channel.
-                # Use the existing splitter to keep messages Discord-safe and readable.
                 full_response = ai_text or ""
                 
-                # Detect and recover from JSON responses that should be natural language
-                if _is_raw_json_response(full_response):
-                    logger.info(f"Detected JSON response that should be natural language: {full_response[:100]}")
-                    full_response = await _convert_json_to_natural_language(
-                        llm_handler=self.bot.llm_handler,
-                        model=active_model,
-                        json_response=full_response,
-                        original_user_message=message.content,
-                        conversation_history=messages_for_ai,
-                    )
-                    # Update the stored history with the corrected response
-                    await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=full_response)
+                # Strip any lingering simulation disclaimers
+                full_response = _strip_simulation_disclaimers(full_response)
                 
                 for chunk in split_response_chunks(full_response):
                     await message.channel.send(chunk)
@@ -266,7 +315,7 @@ class ChatCog(commands.Cog):
                         ai_text = await self.bot.llm_handler.generate_response(
                             model=active_model,
                             messages=messages_for_ai,
-                            tools=None,
+                            tools=None
                         )
 
                 await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=ai_text)
@@ -275,6 +324,9 @@ class ChatCog(commands.Cog):
                 if not full_response:
                     await response_msg.edit(content="I could not generate a response this time.")
                 else:
+                    # Strip any lingering simulation disclaimers
+                    full_response = _strip_simulation_disclaimers(full_response)
+                    
                     first_chunk = True
                     for i in range(0, len(full_response), STREAM_EDIT_CHUNK_SIZE):
                         chunk = full_response[i : i + STREAM_EDIT_CHUNK_SIZE]
@@ -287,7 +339,7 @@ class ChatCog(commands.Cog):
         except Exception:
             logger.exception("AI message handling failed")
             await message.channel.send(
-                "Sorry, I hit an AI error and could not respond right now. Please try again shortly."
+                "I could not generate a response this time. Please try again shortly."
             )
 
         # Process commands so prefix commands still work when on_message is defined.

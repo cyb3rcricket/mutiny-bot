@@ -9,6 +9,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import re
 from datetime import datetime, timedelta
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -325,18 +326,30 @@ class DockerRestartView(discord.ui.View):
         self.bot = bot
         for container in containers:
             name = container["name"]
-            button = discord.ui.Button(label=f"Restart {name}", style=discord.ButtonStyle.danger, custom_id=name)
-            button.callback = self.restart_container
+            if not self._is_safe_container_name(name):
+                continue
+            button = discord.ui.Button(label=f"Restart {name}", style=discord.ButtonStyle.danger, custom_id=f"restart_{name}")
+            button.callback = self._build_restart_callback(name)
             self.add_item(button)
 
-    async def restart_container(self, interaction: discord.Interaction):
+    @staticmethod
+    def _is_safe_container_name(name: str) -> bool:
+        # Docker names should be simple identifiers; reject anything shell-like.
+        return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name or ""))
+
+    def _build_cancel_callback(self, job_id: str):
+        async def _callback(interaction: discord.Interaction):
+            await self.cancel_job(interaction, job_id)
+
+        return _callback
+
+    async def restart_container(self, interaction: discord.Interaction, container_name: str):
         if not MonitoringCog._has_admin_permissions(interaction):
             await interaction.response.send_message("You need Manage Server permission to restart containers.", ephemeral=True)
             return
 
-        container_name = interaction.data.get("custom_id")  # type: ignore
-        if not container_name:
-            await interaction.response.send_message("Invalid container name.", ephemeral=True)
+        if not container_name or not self._is_safe_container_name(container_name):
+            await interaction.response.send_message("Invalid or unauthorized container name.", ephemeral=True)
             return
 
         try:
@@ -377,32 +390,22 @@ class RestartConfirmView(discord.ui.View):
 
 
 class JobCancelView(discord.ui.View):
-    def __init__(self, jobs, bot):
+    def __init__(self, jobs, bot, cog):
         super().__init__()
         self.bot = bot
+        self.cog = cog
         for job in jobs:
             job_id = job.get("id")
             job_name = job.get("name", "Unknown")
-            button = discord.ui.Button(label=f"Cancel {job_name}", style=discord.ButtonStyle.red, custom_id=job_id)
-            button.callback = self.cancel_job
+            button = discord.ui.Button(label=f"Cancel {job_name}", style=discord.ButtonStyle.red)
+            button.callback = self.cog._build_cancel_callback(job_id)
             self.add_item(button)
 
-    async def cancel_job(self, interaction: discord.Interaction):
+    async def cancel_job(self, interaction: discord.Interaction, job_id: str):
         if not MonitoringCog._has_admin_permissions(interaction):
             await interaction.response.send_message("You need Manage Server permission to cancel jobs.", ephemeral=True)
             return
 
-        job_id = interaction.data.get("custom_id")  # type: ignore
-        if not job_id:
-            await interaction.response.send_message("Invalid job ID.", ephemeral=True)
-            return
-        try:
-            self.bot.scheduler_manager.scheduler.remove_job(job_id)
-            await interaction.response.send_message(f"✅ Job '{job_id}' canceled successfully.", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Failed to cancel job '{job_id}': {str(e)}", ephemeral=True)
-            await interaction.response.send_message("Invalid job ID.", ephemeral=True)
-            return
         try:
             self.bot.scheduler_manager.scheduler.remove_job(job_id)
             await interaction.response.send_message(f"✅ Job '{job_id}' canceled successfully.", ephemeral=True)
@@ -596,7 +599,7 @@ class MonitoringCog(commands.Cog):
                 embed.add_field(name=f"📅 {name}", value=f"Next: {next_run}", inline=False)
 
             embed.set_footer(text="Mutiny Bot • Local Only")
-            view = JobCancelView(jobs[:10], self.bot)
+            view = JobCancelView(jobs[:10], self.bot, self)
             await interaction.followup.send(embed=embed, view=view)
 
     @app_commands.command(name="history", description="Show recent chat history 📜")
@@ -832,6 +835,15 @@ class MonitoringCog(commands.Cog):
         if not self._has_admin_permissions(interaction):
             await interaction.response.send_message(
                 "You need Manage Server permission to ping hosts.",
+                ephemeral=True,
+            )
+            return
+
+        # Validate host to prevent command injection
+        import re
+        if not re.match(r'^[a-zA-Z0-9.-]+$', host) or '..' in host or host.startswith('-'):
+            await interaction.response.send_message(
+                "Invalid host format. Only alphanumeric characters, dots, and dashes are allowed.",
                 ephemeral=True,
             )
             return

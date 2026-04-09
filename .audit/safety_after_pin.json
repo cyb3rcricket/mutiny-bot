@@ -1,0 +1,215 @@
+
+
++===========================================================================================================================================================================================+
+
+
+DEPRECATED: this command (`check`) has been DEPRECATED, and will be unsupported beyond 01 June 2024.
+
+
+We highly encourage switching to the new `scan` command which is easier to use, more powerful, and can be set up to mimic the deprecated command if required.
+
+
++===========================================================================================================================================================================================+
+
+
+{
+    "report_meta": {
+        "scan_target": "files",
+        "scanned": [
+            "requirements.txt"
+        ],
+        "scanned_full_path": [
+            "/Users/celtninja/Desktop/GitHub/Mutiny-Bot/requirements.txt"
+        ],
+        "target_languages": [
+            "python"
+        ],
+        "policy_file": null,
+        "policy_file_source": "local",
+        "audit_and_monitor": false,
+        "api_key": false,
+        "account": "",
+        "local_database_path": null,
+        "safety_version": "3.7.0",
+        "timestamp": "2026-04-09 18:09:05",
+        "packages_found": 8,
+        "vulnerabilities_found": 0,
+        "vulnerabilities_ignored": 0,
+        "remediations_recommended": 0,
+        "telemetry": {
+            "safety_options": {
+                "files": {
+                    "-r": 1
+                },
+                "json": {
+                    "--json": 1
+                }
+            },
+            "safety_version": "3.7.0",
+            "safety_source": "cli",
+            "os_type": "Darwin",
+            "os_release": "25.1.0",
+            "os_description": "macOS-26.1-arm64-arm-64bit",
+            "python_version": "3.9.6",
+            "safety_command": "check"
+        },
+        "git": {
+            "branch": "main",
+            "tag": "",
+            "commit": "ea29cc20213802628ffa3e454e56a57f108d2d53",
+            "dirty": "True",
+            "origin": "https://github.com/tommithetechie/mutiny-bot.git"
+        },
+        "project": null,
+        "json_version": "1.1",
+        "remediations_attempted": 0,
+        "remediations_completed": 0,
+        "remediation_mode": "NON_INTERACTIVE"
+    },
+    "scanned_packages": {
+        "discord-py": {
+            "name": "discord-py",
+            "version": "2.7.1",
+            "requirements": [
+                {
+                    "raw": "discord.py==2.7.1",
+                    "extras": [],
+                    "marker": null,
+                    "name": "discord.py",
+                    "specifier": "==2.7.1",
+                    "url": null,
+                    "found": "/Users/celtninja/Desktop/GitHub/Mutiny-Bot/requirements.txt"
+                }
+            ]
+        },
+        "aiosqlite": {
+            "name": "aiosqlite",
+            "version": "0.22.1",
+            "requirements": [
+                {
+                    "raw": "aiosqlite==0.22.1",
+                    "extras": [],
+                    "marker": null,
+                    "name": "aiosqlite",
+                    "specifier": "==0.22.1",
+                    "url": null,
+                    "found": "/Users/celtninja/Desktop/GitHub/Mutiny-Bot/requirements.txt"
+                }
+            ]
+        },
+        "python-dotenv": {
+            "name": "python-dotenv",
+            "version": "1.2.1",
+            "requirements": [
+                {
+                    "raw": "python-dotenv==1.2.1",
+                    "extras": [],
+                    "marker": null,
+                    "name": "python-dotenv",
+                    "specifier": "==1.2.1",
+                    "url": null,
+                    "found": "/Users/celtninja/Desktop/GitHub/Mutiny-Bot/requirements.txt"
+                }
+            ]
+        },
+        "apscheduler": {
+            "name": "apscheduler",
+            "version": "3.11.2",
+            "requirements": [
+                {
+                    "raw": "apscheduler==3.11.2",
+                    "extras": [],
+                    "marker": null,
+                    "name": "apscheduler",
+                    "specifier": "==3.11.2",
+                    "url": null,
+                    "found": "/Users/celtninja/Desktop/GitHub/Mutiny-Bot/requirements.txt"
+                }
+            ]
+        },
+        "litellm": {
+            "name": "litellm",
+            "version": "1.82.6",
+            "requirements": [
+                {
+                    "raw": "litellm==1.82.6",
+                    "extras": [],
+                    "marker": null,
+                    "name": "litellm",
+                    "specifier": "==1.82.6",
+                    "url": null,
+                    "found": "/Users/celtninja/Desktop/GitHub/Mutiny-Bot/requirements.txt"
+                }
+            ]
+        },
+        "sqlalchemy": {
+            "name": "sqlalchemy",
+            "version": "2.0.49",
+            "requirements": [
+                {
+                    "raw": "SQLAlchemy==2.0.49",
+                    "extras": [],
+                    "marker": null,
+                    "name": "SQLAlchemy",
+                    "specifier": "==2.0.49",
+                    "url": null,
+                    "found": "/Users/celtninja/Desktop/GitHub/Mutiny-Bot/requirements.txt"
+                }
+            ]
+        },
+        "mempalace": {
+            "name": "mempalace",
+            "version": "3.0.0",
+            "requirements": [
+                {
+                    "raw": "mempalace==3.0.0",
+                    "extras": [],
+                    "marker": null,
+                    "name": "mempalace",
+                    "specifier": "==3.0.0",
+                    "url": null,
+                    "found": "/Users/celtninja/Desktop/GitHub/Mutiny-Bot/requirements.txt"
+                }
+            ]
+        },
+        "feedparser": {
+            "name": "feedparser",
+            "version": "6.0.12",
+            "requirements": [
+                {
+                    "raw": "feedparser==6.0.12",
+                    "extras": [],
+                    "marker": null,
+                    "name": "feedparser",
+                    "specifier": "==6.0.12",
+                    "url": null,
+                    "found": "/Users/celtninja/Desktop/GitHub/Mutiny-Bot/requirements.txt"
+                }
+            ]
+        }
+    },
+    "affected_packages": {},
+    "announcements": [],
+    "vulnerabilities": [],
+    "ignored_vulnerabilities": [],
+    "remediations": {},
+    "remediations_results": {
+        "vulnerabilities_fixed": [],
+        "remediations_applied": {},
+        "remediations_skipped": {}
+    }
+}
+
+
++===========================================================================================================================================================================================+
+
+
+DEPRECATED: this command (`check`) has been DEPRECATED, and will be unsupported beyond 01 June 2024.
+
+
+We highly encourage switching to the new `scan` command which is easier to use, more powerful, and can be set up to mimic the deprecated command if required.
+
+
++===========================================================================================================================================================================================+
+
+

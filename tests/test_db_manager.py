@@ -50,8 +50,10 @@ class DatabaseManagerFormatSizeTests(unittest.TestCase):
     """Tests for db size formatter helper."""
 
     def test_format_db_size_missing_file(self) -> None:
-        db_manager = DatabaseManager("/tmp/definitely_missing_mutiny_db.sqlite")
-        self.assertEqual(db_manager.format_db_size(), "0 KB")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            missing_db = os.path.join(tmp_dir, "definitely_missing_mutiny_db.sqlite")
+            db_manager = DatabaseManager(missing_db)
+            self.assertEqual(db_manager.format_db_size(), "0 KB")
 
     def test_format_db_size_existing_file(self) -> None:
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
