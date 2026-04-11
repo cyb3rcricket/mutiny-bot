@@ -10,6 +10,7 @@ import discord
 from discord.ext import commands
 
 from config import ALLOWED_MODELS, DEFAULT_MODEL
+from mutiny_bot import get_capabilities_response
 from tools.scheduler_manager import reset_tool_request_context, set_tool_request_context
 from tools.registry import TOOL_SCHEMAS
 
@@ -247,7 +248,7 @@ class ChatCog(commands.Cog):
         user_id = str(message.author.id)
 
         if is_capabilities_question(message.content):
-            capability_reply = __import__("mutiny_bot").get_capabilities_response()
+            capability_reply = get_capabilities_response()
             await self.bot.db_manager.insert_history_message(user_id=user_id, role="user", content=message.content)
             await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=capability_reply)
             for chunk in split_response_chunks(capability_reply):
