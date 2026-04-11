@@ -2,7 +2,6 @@
 
 import asyncio
 import os
-import threading
 from typing import Optional
 
 import aiosqlite
@@ -22,19 +21,16 @@ class DatabaseManager:
         self.bot = bot
         self._db: Optional[aiosqlite.Connection] = None
         self._db_lock: Optional[asyncio.Lock] = None
-        self._db_lock_guard = threading.Lock()
 
-    async def _get_lock(self) -> asyncio.Lock:
-        """Get or create the DB lifecycle lock in an active event loop."""
+    async def _get_db_lock(self) -> asyncio.Lock:
+        """Create the async DB lock lazily inside an active event loop."""
         if self._db_lock is None:
-            with self._db_lock_guard:
-                if self._db_lock is None:
-                    self._db_lock = asyncio.Lock()
+            self._db_lock = asyncio.Lock()
         return self._db_lock
 
     async def _ensure_connection(self) -> aiosqlite.Connection:
         """Open and cache a single SQLite connection for the bot lifetime."""
-        db_lock = await self._get_lock()
+        db_lock = await self._get_db_lock()
         async with db_lock:
             if self._db is None:
                 self._db = await aiosqlite.connect(self.db_path)
@@ -49,7 +45,7 @@ class DatabaseManager:
 
     async def close(self) -> None:
         """Close the cached SQLite connection on bot shutdown."""
-        db_lock = await self._get_lock()
+        db_lock = await self._get_db_lock()
         async with db_lock:
             if self._db is not None:
                 await self._db.close()

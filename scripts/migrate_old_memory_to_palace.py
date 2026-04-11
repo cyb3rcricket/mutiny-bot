@@ -29,9 +29,16 @@ try:
     from mempalace.knowledge_graph import KnowledgeGraph
 except ImportError:
     KnowledgeGraph = None
-from mempalace.mcp_server import tool_add_drawer
+try:
+    from mempalace.mcp_server import tool_add_drawer
+except ImportError:
+    tool_add_drawer = None
 
-_ADD_DRAWER_PARAMS = set(inspect.signature(tool_add_drawer).parameters)
+_ADD_DRAWER_PARAMS = (
+    set(inspect.signature(tool_add_drawer).parameters)
+    if callable(tool_add_drawer)
+    else set()
+)
 
 
 @dataclass
@@ -93,6 +100,11 @@ def _ensure_wing_and_room(graph: Any, wing: str, room: str) -> None:
 
 
 def _store_drawer(palace_path: str, wing: str, room: str, content: str, metadata: dict[str, Any]) -> None:
+    if not callable(tool_add_drawer):
+        raise RuntimeError(
+            "MemPalace MCP server integration is unavailable. Install MemPalace to run migration writes."
+        )
+
     # Keep custom palace target working on MemPalace variants that read path from env.
     os.environ["MEMPALACE_PALACE_PATH"] = palace_path
 
@@ -249,6 +261,10 @@ def migrate(db_path: str, palace_path: str, dry_run: bool = False) -> MigrationS
         raise FileNotFoundError(f"SQLite database not found: {db_path}")
 
     if not dry_run:
+        if not callable(tool_add_drawer):
+            raise RuntimeError(
+                "MemPalace MCP server integration is unavailable. Install MemPalace to run migration."
+            )
         os.makedirs(palace_path, exist_ok=True)
         os.environ["MEMPALACE_PALACE_PATH"] = palace_path
 

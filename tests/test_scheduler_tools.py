@@ -96,16 +96,39 @@ class SchedulerToolsAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "Error listing automations. Check logs for details.")
 
     async def test_schedule_daily_automation_internal_error_is_sanitized(self) -> None:
-        scheduler = Mock()
-        scheduler.add_job.side_effect = RuntimeError("traceback")
-
-        tokens = set_tool_request_context(user_id="u1", is_admin=True, scheduler=scheduler)
+        import tools.scheduler_manager as sm
+        original = sm.BROADCAST_CHANNEL_ID
         try:
-            result = await schedule_daily_automation("get_morning_briefing", 7, 0)
+            sm.BROADCAST_CHANNEL_ID = 12345
+            scheduler = Mock()
+            scheduler.add_job.side_effect = RuntimeError("traceback")
+
+            tokens = set_tool_request_context(user_id="u1", is_admin=True, scheduler=scheduler)
+            try:
+                result = await schedule_daily_automation("get_morning_briefing", 7, 0)
+            finally:
+                reset_tool_request_context(tokens)
         finally:
-            reset_tool_request_context(tokens)
+            sm.BROADCAST_CHANNEL_ID = original
 
         self.assertEqual(result, "Error scheduling automation. Check logs for details.")
+
+    async def test_schedule_daily_automation_rejects_when_broadcast_channel_unconfigured(self) -> None:
+        import tools.scheduler_manager as sm
+        original = sm.BROADCAST_CHANNEL_ID
+        try:
+            sm.BROADCAST_CHANNEL_ID = 0
+            scheduler = Mock()
+            tokens = set_tool_request_context(user_id="u1", is_admin=True, scheduler=scheduler)
+            try:
+                result = await schedule_daily_automation("get_morning_briefing", 7, 0)
+            finally:
+                reset_tool_request_context(tokens)
+        finally:
+            sm.BROADCAST_CHANNEL_ID = original
+
+        self.assertIn("broadcast_channel_id", result.lower())
+        scheduler.add_job.assert_not_called()
 
 
 if __name__ == "__main__":

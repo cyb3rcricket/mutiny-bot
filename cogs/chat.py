@@ -10,6 +10,7 @@ import discord
 from discord.ext import commands
 
 from config import ALLOWED_MODELS, DEFAULT_MODEL
+from bot.capabilities import get_capabilities_response
 from tools.scheduler_manager import reset_tool_request_context, set_tool_request_context
 from tools.registry import TOOL_SCHEMAS
 
@@ -61,16 +62,8 @@ def is_capabilities_question(user_text: str) -> bool:
 
 def build_capabilities_message() -> str:
     """Return a proud, specific list of MutinyBot's actual capabilities."""
-    return (
-        "I'm MutinyBot, your direct Discord assistant with real tools:\n"
-        "• **Morning Briefing**: Local system snapshot and ops checklist.\n"
-        "• **News Monitoring**: Automated RSS feeds with deduplication.\n"
-        "• **Eisenhower Task Prioritization**: Classify tasks into urgent/important quadrants with concrete next steps.\n"
-        "• **MemPalace Memory**: Persistent knowledge graph for conversations and facts.\n"
-        "• **Local Ollama Models**: phi4-mini, gemma4:e4b, qwen2.5-coder for AI responses.\n"
-        "• **Automation Scheduling**: Daily jobs for briefings, news, and custom tools.\n\n"
-        "Ask me to prioritize tasks, get a briefing, or manage automations!"
-    )
+    # Keep a single canonical capabilities source to avoid drift.
+    return get_capabilities_response()
 
 
 def build_automation_capabilities_message() -> str:
@@ -247,7 +240,7 @@ class ChatCog(commands.Cog):
         user_id = str(message.author.id)
 
         if is_capabilities_question(message.content):
-            capability_reply = __import__("mutiny_bot").get_capabilities_response()
+            capability_reply = get_capabilities_response()
             await self.bot.db_manager.insert_history_message(user_id=user_id, role="user", content=message.content)
             await self.bot.db_manager.insert_history_message(user_id=user_id, role="assistant", content=capability_reply)
             for chunk in split_response_chunks(capability_reply):
@@ -273,8 +266,9 @@ class ChatCog(commands.Cog):
                 active_model = DEFAULT_MODEL
                 await self.bot.db_manager.update_config("model", DEFAULT_MODEL)
 
+            system_prompt = await self.bot.db_manager.get_system_prompt()
             messages_for_ai = [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 *user_history,
             ]
 
@@ -326,16 +320,16 @@ class ChatCog(commands.Cog):
                 else:
                     # Strip any lingering simulation disclaimers
                     full_response = _strip_simulation_disclaimers(full_response)
-                    
-                    first_chunk = True
-                    for i in range(0, len(full_response), STREAM_EDIT_CHUNK_SIZE):
-                        chunk = full_response[i : i + STREAM_EDIT_CHUNK_SIZE]
-                        if first_chunk:
-                            await response_msg.edit(content=chunk)
-                            first_chunk = False
-                        else:
-                            await response_msg.edit(content=(response_msg.content or "") + chunk)
-                        await asyncio.sleep(0.08)   # tiny pause between edits for smoothness
+
+                    # Avoid growing a single edited message past Discord's 2000-char limit.
+                    stream_chunks = split_response_chunks(
+                        full_response,
+                        max_chunk_size=STREAM_EDIT_CHUNK_SIZE,
+                    )
+                    await response_msg.edit(content=stream_chunks[0])
+                    for chunk in stream_chunks[1:]:
+                        await message.channel.send(chunk)
+                        await asyncio.sleep(0.08)   # tiny pause between sends for smoothness
         except Exception:
             logger.exception("AI message handling failed")
             await message.channel.send(

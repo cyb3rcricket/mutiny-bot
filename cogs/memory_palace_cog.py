@@ -50,20 +50,25 @@ class MemoryPalaceCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message) -> None:
-        """Store every non-bot message in MemPalace."""
+        """Store every non-bot guild message in MemPalace."""
         if message.author.bot:
+            return
+        if not message.guild:
             return
         if not self.mempalace_available:
             return
         assert tool_add_drawer is not None
 
         try:
+            guild_name = message.guild.name
+            channel_name = getattr(message.channel, "name", str(message.channel.id))
+
             # Prepare metadata
             metadata = {
                 "author": message.author.name,
-                "channel": message.channel.name,
+                "channel": channel_name,
                 "timestamp": message.created_at.isoformat(),
-                "guild": message.guild.name,
+                "guild": guild_name,
             }
 
             # Store the conversation chunk - tool_add_drawer automatically creates wing/room if needed
@@ -72,8 +77,8 @@ class MemoryPalaceCog(commands.Cog):
             os.environ["MEMPALACE_PALACE_PATH"] = self.palace_path
 
             tool_add_drawer(
-                wing=message.guild.name,
-                room=message.channel.name,
+                wing=guild_name,
+                room=channel_name,
                 content=message.content,
                 source_file=str(metadata.get("table", "")),
                 added_by="bot",

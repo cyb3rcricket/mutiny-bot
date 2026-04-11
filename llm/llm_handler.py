@@ -8,7 +8,7 @@ from inspect import isawaitable
 from typing import Any, Optional
 
 import litellm
-from config import MAX_HISTORY_MESSAGES
+from config import DEFAULT_SYSTEM_PROMPT, MAX_HISTORY_MESSAGES
 
 
 MAX_TAIL_MESSAGES = 8
@@ -37,22 +37,15 @@ class LLMHandler:
         return getattr(choices[0], "message", None)
 
     async def generate_response(self, model: str, messages: list[dict[str, Any]], tools: Optional[list[dict[str, Any]]] = None) -> str:
-        # NUCLEAR SYSTEM PROMPT – this MUST be the VERY FIRST message every single time
-        SYSTEM_PROMPT = """You are MutinyBot, a friendly, conversational Discord assistant built for Tommi.
-You have real tools (morning briefing, news monitors, Eisenhower task prioritization, MemPalace, population lookup, etc.).
-NEVER output raw JSON, function calls, tool schemas, or {"type": "function"...}.
-NEVER say "simulate", "hypothetical", "for security reasons", "tool error", or mention knowledge cutoffs.
-If you need to use a tool, use it internally and respond ONLY with the final clean answer.
-Feel free to chat normally, engage in friendly conversation, and be helpful rather than overly robotic or brief. No code blocks unless explicitly asked."""
-
-        # Force clean context - ensure the first message is our ironclad prompt
-        filtered_messages = [msg for msg in messages if msg.get("role") != "system"]
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + filtered_messages
-        
         # Ensure model has provider prefix for litellm
         if not model.startswith("ollama/"):
             model = f"ollama/{model}"
-        
+
+        # Use the system message already present in messages (set by the caller from the DB).
+        # If none was provided, inject the default so there is always a system prompt.
+        if not any(msg.get("role") == "system" for msg in messages):
+            messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT}] + list(messages)
+
         completion_kwargs = {
             "model": model,
             "messages": messages,
@@ -79,35 +72,55 @@ Feel free to chat normally, engage in friendly conversation, and be helpful rath
 
         # NUCLEAR SANITIZER – kill any tool call leakage
         if getattr(ai_message, "tool_calls", None):
-            # Execute tool(s) silently
-            tool_call = ai_message.tool_calls[0]
-            function_data = getattr(tool_call, "function", None)
-            tool_name = getattr(function_data, "name", "")
-            raw_arguments = getattr(function_data, "arguments", "{}") or "{}"
-            
-            try:
-                tool_result = await self.execute_tool(tool_name, raw_arguments)
-            except asyncio.TimeoutError:
-                tool_result = f"Tool '{tool_name}' timed out."
-                
-            tool_result_str = str(tool_result)
-            if len(tool_result_str) > MAX_TOOL_RESULT_CHARS:
-                trunc_len = MAX_TOOL_RESULT_CHARS - len(TOOL_RESULT_TRUNCATION_SUFFIX)
-                tool_result_str = tool_result_str[:trunc_len] + TOOL_RESULT_TRUNCATION_SUFFIX
-            
-            # Re-create a tool call dict that liteLLM expects in the assistant's context
-            history_tool_call = {
-                "id": getattr(tool_call, "id", f"call_{tool_name}"),
-                "type": getattr(tool_call, "type", "function"),
-                "function": {
-                    "name": tool_name,
-                    "arguments": raw_arguments,
-                },
-            }
-            
-            # Now make a second call with the tool result to get final clean answer
-            messages.append({"role": "assistant", "content": getattr(ai_message, "content", "") or "", "tool_calls": [history_tool_call]})
-            messages.append({"role": "tool", "tool_call_id": history_tool_call["id"], "name": tool_name, "content": tool_result_str})
+            history_tool_calls: list[dict[str, Any]] = []
+            tool_results: list[tuple[str, str, str]] = []
+
+            # Execute all requested tools in this turn and include each result in history.
+            for index, tool_call in enumerate(ai_message.tool_calls):
+                function_data = getattr(tool_call, "function", None)
+                tool_name = getattr(function_data, "name", "")
+                raw_arguments = getattr(function_data, "arguments", "{}") or "{}"
+
+                try:
+                    tool_result = await self.execute_tool(tool_name, raw_arguments)
+                except asyncio.TimeoutError:
+                    tool_result = f"Tool '{tool_name}' timed out."
+
+                tool_result_str = str(tool_result)
+                if len(tool_result_str) > MAX_TOOL_RESULT_CHARS:
+                    trunc_len = MAX_TOOL_RESULT_CHARS - len(TOOL_RESULT_TRUNCATION_SUFFIX)
+                    tool_result_str = tool_result_str[:trunc_len] + TOOL_RESULT_TRUNCATION_SUFFIX
+
+                # Re-create a tool call dict that liteLLM expects in assistant context.
+                tool_call_id = getattr(tool_call, "id", "") or f"call_{tool_name}_{index}"
+                history_tool_call = {
+                    "id": tool_call_id,
+                    "type": getattr(tool_call, "type", "function"),
+                    "function": {
+                        "name": tool_name,
+                        "arguments": raw_arguments,
+                    },
+                }
+                history_tool_calls.append(history_tool_call)
+                tool_results.append((tool_call_id, tool_name, tool_result_str))
+
+            # Make a second call with all tool results to get a clean final answer.
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": getattr(ai_message, "content", "") or "",
+                    "tool_calls": history_tool_calls,
+                }
+            )
+            for tool_call_id, tool_name, tool_result_str in tool_results:
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": tool_result_str,
+                    }
+                )
             
             try:
                 final_response = await litellm.acompletion(

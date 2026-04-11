@@ -33,6 +33,7 @@ class MutinyBot(commands.Bot):
         self._app_commands_synced = False
         # Simple cooldown tracking: user_id -> last_command_time
         self.command_cooldowns = defaultdict(float)
+        self.start_time = time.time()
 
     async def setup_hook(self) -> None:
         tools_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools")

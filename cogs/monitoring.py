@@ -19,11 +19,12 @@ from discord.ext import commands
 from discord import ui
 from typing import cast, Any, Optional
 
-from config import MONITORING_CHANNEL_ID, LOG_PATHS, ALLOWED_MODELS, BOT_OWNER_ID
+from config import MONITORING_CHANNEL_ID, LOG_PATHS, ALLOWED_MODELS, BOT_OWNER_ID, BROADCAST_CHANNEL_ID
 from llm.models import get_installed_models
 from tools.registry import AVAILABLE_TOOLS, TOOL_SCHEMAS
-from tools.news_monitor import get_fresh_news
+from tools.news_monitor import execute_news_monitor, get_fresh_news
 from tools.scheduler_manager import execute_and_broadcast
+from scheduler.scheduler_manager import resume_job
 
 
 def parse_schedule_time(time_str: str):
@@ -127,11 +128,13 @@ def generate_daily_insight(snapshot: dict[str, Any]) -> str:
             insights.append("😴 Your CPU is taking it easy today.")
 
     if snapshot["disk_free"] is not None:
-        free_percent = (snapshot["disk_free"] / snapshot["disk_total"]) * 100
-        if free_percent < 10:
-            insights.append("💾 Your disk space is running low!")
-        elif free_percent > 80:
-            insights.append("🗂️ You have plenty of disk space available.")
+        disk_total = snapshot.get("disk_total")
+        if isinstance(disk_total, (int, float)) and disk_total > 0:
+            free_percent = (snapshot["disk_free"] / disk_total) * 100
+            if free_percent < 10:
+                insights.append("💾 Your disk space is running low!")
+            elif free_percent > 80:
+                insights.append("🗂️ You have plenty of disk space available.")
 
     if snapshot["hostname"] != "unknown-host":
         insights.append(f"🏠 Running on {snapshot['hostname']} today.")
@@ -353,9 +356,12 @@ class DockerRestartView(discord.ui.View):
             return
 
         try:
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, 
-                lambda: subprocess.run(["docker", "restart", container_name], capture_output=True, text=True, timeout=30)
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "restart", container_name],
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             if result.returncode == 0:
                 await interaction.response.send_message(f"✅ Container '{container_name}' restarted successfully.", ephemeral=True)
@@ -381,7 +387,9 @@ class RestartConfirmView(discord.ui.View):
         await interaction.response.send_message("🔄 Restarting bot...", ephemeral=True)
         # Give time for the message to send
         await asyncio.sleep(1)
-        # Restart the bot
+        # Cleanly shut down the event loop, scheduler, and database before
+        # replacing the process, so SQLite is not left in a dirty state.
+        await self.bot.close()
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
     @discord.ui.button(label="No", style=discord.ButtonStyle.secondary)
@@ -439,9 +447,20 @@ class MonitoringCog(commands.Cog):
         return bool(perms and (perms.manage_guild or perms.administrator))
 
     @staticmethod
-    def _is_bot_owner(interaction: discord.Interaction) -> bool:
-        """Allow only the bot owner."""
-        return interaction.user and interaction.user.id == BOT_OWNER_ID
+    def _is_bot_owner(interaction: discord.Interaction) -> tuple[bool, str]:
+        """Allow only the bot owner.
+
+        Returns a ``(allowed, message)`` tuple so callers can surface a
+        helpful error when the check fails for different reasons.
+        """
+        if BOT_OWNER_ID == 0:
+            return False, (
+                "BOT_OWNER_ID is not configured on this bot. "
+                "Ask the server admin to set the BOT_OWNER_ID environment variable."
+            )
+        if not (interaction.user and interaction.user.id == BOT_OWNER_ID):
+            return False, "Only the bot owner can use this command."
+        return True, ""
 
     def _check_channel(self, interaction: discord.Interaction) -> bool:
         if MONITORING_CHANNEL_ID and interaction.channel and interaction.channel.id != MONITORING_CHANNEL_ID:
@@ -685,11 +704,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can run tools directly.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         tool_func = AVAILABLE_TOOLS.get(tool_name)
@@ -741,11 +758,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can view system information.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -855,15 +870,13 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can ping hosts.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
-        result = await asyncio.get_event_loop().run_in_executor(None, ping_host, host)
+        result = await asyncio.to_thread(ping_host, host)
 
         if result["status"] == "success":
             embed = discord.Embed(
@@ -897,11 +910,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can generate scripts.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -941,15 +952,13 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can view Docker containers.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
-        containers = await asyncio.get_event_loop().run_in_executor(None, get_docker_containers)
+        containers = await asyncio.to_thread(get_docker_containers)
 
         embed = discord.Embed(title="🐳 Running Docker Containers", color=0x3498db)
         if not containers:
@@ -987,11 +996,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can view system logs.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         log_path = LOG_PATHS.get(service.lower())
@@ -1008,9 +1015,12 @@ class MonitoringCog(commands.Cog):
         await interaction.response.defer()
 
         try:
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: subprocess.run(["tail", "-20", log_path], capture_output=True, text=True, timeout=10)
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["tail", "-20", log_path],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode == 0:
                 logs_content = result.stdout.strip()
@@ -1102,11 +1112,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can restart the bot.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         embed = discord.Embed(
@@ -1145,14 +1153,16 @@ class MonitoringCog(commands.Cog):
 
         try:
             job.pause()
-            # Schedule resume
+            # Schedule resume using a named function — lambdas cannot be pickled
+            # by the SQLAlchemy jobstore.
             resume_time = datetime.now() + timedelta(hours=hours)
             scheduler.add_job(
-                func=lambda: job.resume(),
+                func=resume_job,
                 trigger="date",
                 run_date=resume_time,
                 id=f"resume_{job_id}",
-                name=f"Resume job {job_id}"
+                name=f"Resume job {job_id}",
+                args=(job_id,),
             )
             embed = discord.Embed(
                 title="⏰ Job Snoozed",
@@ -1213,11 +1223,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can get error explanations.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -1262,11 +1270,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can query notes and history.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -1339,11 +1345,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can schedule tasks.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         try:
@@ -1359,14 +1363,47 @@ class MonitoringCog(commands.Cog):
             return
 
         scheduler = self.bot.scheduler_manager.scheduler
-        
-        # Create a job that logs the task (for demo)
+
+        # Validate that task maps to a registered tool
+        if task not in AVAILABLE_TOOLS:
+            available = ", ".join(sorted(AVAILABLE_TOOLS.keys())) or "none"
+            embed = discord.Embed(
+                title="❌ Unknown Tool",
+                description=(
+                    f"**{task}** is not a registered tool.\n\n"
+                    f"Available tools: {available}"
+                ),
+                color=0xff0000,
+            )
+            embed.set_footer(text="Mutiny Bot • Local Only")
+            await interaction.response.send_message(embed=embed)
+            return
+
+        # Reject scheduling when no broadcast channel is configured — the job
+        # would silently do nothing when it fires.
+        if not isinstance(BROADCAST_CHANNEL_ID, int) or BROADCAST_CHANNEL_ID <= 0:
+            embed = discord.Embed(
+                title="❌ Broadcast Channel Not Configured",
+                description=(
+                    "**BROADCAST_CHANNEL_ID** is not set in the bot environment.\n\n"
+                    "Scheduled tasks post their results to that channel. "
+                    "Set the environment variable and restart the bot before scheduling tasks."
+                ),
+                color=0xff0000,
+            )
+            embed.set_footer(text="Mutiny Bot • Local Only")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # Sanitize task name for use in the job ID (alphanumeric + underscores only)
+        safe_task = re.sub(r"[^A-Za-z0-9_]", "_", task)
         job = scheduler.add_job(
-            func=lambda: print(f"Scheduled task executed: {task}"),
+            execute_and_broadcast,
             trigger=trigger,
-            id=f"scheduled_{task}_{datetime.now().timestamp()}",
+            id=f"auto_{safe_task}_{datetime.now().timestamp()}",
             name=f"Scheduled: {task}",
-            replace_existing=True
+            args=(task,),
+            replace_existing=True,
         )
 
         embed = discord.Embed(
@@ -1396,11 +1433,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can use AI brainstorming.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -1444,11 +1479,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can list AI tools.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -1575,11 +1608,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can post the full command list.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         # Use specified channel or current channel
@@ -1701,11 +1732,9 @@ class MonitoringCog(commands.Cog):
             await self._reject_unavailable(interaction)
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can sync commands.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -1752,12 +1781,10 @@ class MonitoringCog(commands.Cog):
             return
 
         time_str = f"{frequency} at {time}" if frequency == "daily" else frequency
-        trigger = parse_schedule_time(time_str)
-        if not trigger:
-            await interaction.response.send_message(
-                "Invalid frequency or time format.",
-                ephemeral=True,
-            )
+        try:
+            trigger = parse_schedule_time(time_str)
+        except ValueError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
             return
 
         palace_path = os.path.expanduser("~/.mutiny/palace")
@@ -1779,7 +1806,7 @@ class MonitoringCog(commands.Cog):
         }
 
         scheduler.add_job(
-            "tools.news_monitor:execute_news_monitor",
+            execute_news_monitor,
             trigger=trigger,
             args=[job_data],
             id=job_id,

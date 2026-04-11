@@ -8,7 +8,7 @@ from typing import List, Dict, Any
 import feedparser
 import litellm
 
-from config import DEFAULT_MODEL
+from config import DEFAULT_MODEL, OLLAMA_API_BASE
 
 
 logger = logging.getLogger("mutiny_bot.tools.news_monitor")
@@ -47,7 +47,7 @@ async def get_fresh_news(search_query: str, dedup_room: str, palace_path: str) -
         # Check if already posted
         results = search_memories(link, palace_path=palace_path, wing="news-monitor", room=dedup_room)
         if not results:
-            # New article
+            # New article — do NOT mark here; caller marks after successful broadcast
             title = entry.title
             published = getattr(entry, 'published', getattr(entry, 'updated', ''))
             summary = getattr(entry, 'summary', getattr(entry, 'description', ''))
@@ -57,13 +57,6 @@ async def get_fresh_news(search_query: str, dedup_room: str, palace_path: str) -
                 "published": published,
                 "summary": summary
             })
-            # Mark as posted
-            tool_add_drawer(
-                wing="news-monitor",
-                room=dedup_room,
-                content=link,
-                added_by="news_monitor"
-            )
     return new_articles
 
 
@@ -91,7 +84,8 @@ async def execute_news_monitor(job_data: dict) -> None:
             response = await litellm.acompletion(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=100
+                max_tokens=100,
+                api_base=OLLAMA_API_BASE,
             )
             choices = getattr(response, "choices", [])
             message_obj = getattr(choices[0], "message", None) if choices else None
@@ -100,3 +94,17 @@ async def execute_news_monitor(job_data: dict) -> None:
         message = "\n\n".join(blurbs)
     
     await _enqueue_broadcast(message, channel_id)
+
+    # Mark articles as posted only after successful broadcast (two-phase commit).
+    if articles and tool_add_drawer is not None:
+        os.environ["MEMPALACE_PALACE_PATH"] = palace_path
+        for article in articles:
+            try:
+                tool_add_drawer(
+                    wing="news-monitor",
+                    room=name,
+                    content=article["link"],
+                    added_by="news_monitor",
+                )
+            except Exception as e:
+                logger.error("Failed to mark article as posted: %s", e)

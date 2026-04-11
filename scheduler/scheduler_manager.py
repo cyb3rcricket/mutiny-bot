@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Any, cast
+from typing import Any, cast, Optional
 
 import discord
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -17,10 +17,30 @@ except ImportError:  # pragma: no cover - exercised in dependency-limited runtim
     SQLAlchemyJobStore = None
 
 
+# Module-level scheduler reference so named callback functions (e.g. resume_job)
+# can access the running scheduler without capturing objects in unpicklable lambdas.
+_scheduler_ref: Optional[Any] = None
+
+
+def resume_job(job_id: str) -> None:
+    """Resume a previously paused job by ID.
+
+    Used as a picklable named callback by /snooze-job instead of a lambda.
+    The scheduler reference is populated when SchedulerManager is instantiated.
+    """
+    if _scheduler_ref is not None:
+        _scheduler_ref.resume_job(job_id)
+    else:
+        logging.getLogger("mutiny_bot.scheduler").warning(
+            "resume_job called but _scheduler_ref is not set (job_id=%s)", job_id
+        )
+
+
 class SchedulerManager:
     """Handles scheduling and broadcast queue for the bot."""
 
     def __init__(self, bot: Any) -> None:
+        global _scheduler_ref
         self.bot = bot
         self._logger = logging.getLogger("mutiny_bot.scheduler")
         if SQLAlchemyJobStore is not None:
@@ -36,6 +56,8 @@ class SchedulerManager:
             self.scheduler = AsyncIOScheduler()
         # Set the scheduler on the bot for tools to access
         self.bot.scheduler = self.scheduler
+        # Expose scheduler to module-level callbacks (e.g. resume_job)
+        _scheduler_ref = self.scheduler
 
     async def start_scheduler(self) -> None:
         """Start the scheduler if not already running."""
