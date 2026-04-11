@@ -273,8 +273,9 @@ class ChatCog(commands.Cog):
                 active_model = DEFAULT_MODEL
                 await self.bot.db_manager.update_config("model", DEFAULT_MODEL)
 
+            system_prompt = await self.bot.db_manager.get_system_prompt()
             messages_for_ai = [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 *user_history,
             ]
 

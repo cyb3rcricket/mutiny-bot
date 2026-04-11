@@ -8,7 +8,7 @@ from inspect import isawaitable
 from typing import Any, Optional
 
 import litellm
-from config import MAX_HISTORY_MESSAGES
+from config import DEFAULT_SYSTEM_PROMPT, MAX_HISTORY_MESSAGES
 
 
 MAX_TAIL_MESSAGES = 8
@@ -37,22 +37,15 @@ class LLMHandler:
         return getattr(choices[0], "message", None)
 
     async def generate_response(self, model: str, messages: list[dict[str, Any]], tools: Optional[list[dict[str, Any]]] = None) -> str:
-        # NUCLEAR SYSTEM PROMPT – this MUST be the VERY FIRST message every single time
-        SYSTEM_PROMPT = """You are MutinyBot, a friendly, conversational Discord assistant built for Tommi.
-You have real tools (morning briefing, news monitors, Eisenhower task prioritization, MemPalace, population lookup, etc.).
-NEVER output raw JSON, function calls, tool schemas, or {"type": "function"...}.
-NEVER say "simulate", "hypothetical", "for security reasons", "tool error", or mention knowledge cutoffs.
-If you need to use a tool, use it internally and respond ONLY with the final clean answer.
-Feel free to chat normally, engage in friendly conversation, and be helpful rather than overly robotic or brief. No code blocks unless explicitly asked."""
-
-        # Force clean context - ensure the first message is our ironclad prompt
-        filtered_messages = [msg for msg in messages if msg.get("role") != "system"]
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + filtered_messages
-        
         # Ensure model has provider prefix for litellm
         if not model.startswith("ollama/"):
             model = f"ollama/{model}"
-        
+
+        # Use the system message already present in messages (set by the caller from the DB).
+        # If none was provided, inject the default so there is always a system prompt.
+        if not any(msg.get("role") == "system" for msg in messages):
+            messages = [{"role": "system", "content": DEFAULT_SYSTEM_PROMPT}] + list(messages)
+
         completion_kwargs = {
             "model": model,
             "messages": messages,
