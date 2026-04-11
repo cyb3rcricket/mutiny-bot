@@ -5,9 +5,19 @@ from typing import Any, Optional
 import discord
 from discord import app_commands
 from discord.ext import commands
-from mempalace.knowledge_graph import KnowledgeGraph
-from mempalace.mcp_server import tool_add_drawer, tool_status
-from mempalace.searcher import search_memories
+
+try:
+    from mempalace.knowledge_graph import KnowledgeGraph
+    from mempalace.mcp_server import tool_add_drawer, tool_status
+    from mempalace.searcher import search_memories
+except Exception as mempalace_import_error:
+    KnowledgeGraph = None
+    tool_add_drawer = None
+    tool_status = None
+    search_memories = None
+    _MEMPALACE_IMPORT_ERROR = mempalace_import_error
+else:
+    _MEMPALACE_IMPORT_ERROR = None
 
 
 class MemoryPalaceCog(commands.Cog):
@@ -20,7 +30,12 @@ class MemoryPalaceCog(commands.Cog):
         self.search_memories = search_memories
         self.knowledge_graph_cls = KnowledgeGraph
         self.logger = logging.getLogger("mutiny_bot.memory_palace")
-        self.graph = self.knowledge_graph_cls(self.kg_db_path)
+        self.mempalace_available = bool(
+            self.search_memories and self.knowledge_graph_cls and tool_add_drawer and tool_status
+        )
+        self.graph = self.knowledge_graph_cls(self.kg_db_path) if self.knowledge_graph_cls else None
+        if not self.mempalace_available:
+            self.logger.warning("MemPalace is unavailable: %s", _MEMPALACE_IMPORT_ERROR)
 
     @staticmethod
     def _has_admin_permissions(interaction: discord.Interaction) -> bool:
@@ -38,6 +53,9 @@ class MemoryPalaceCog(commands.Cog):
         """Store every non-bot message in MemPalace."""
         if message.author.bot:
             return
+        if not self.mempalace_available:
+            return
+        assert tool_add_drawer is not None
 
         try:
             # Prepare metadata
@@ -69,6 +87,11 @@ class MemoryPalaceCog(commands.Cog):
         if not MemoryPalaceCog._has_admin_permissions(interaction):
             await interaction.response.send_message("You need Manage Server permission to view palace status.", ephemeral=True)
             return
+
+        if not self.mempalace_available:
+            await interaction.response.send_message("MemPalace is unavailable. Check dependency compatibility.", ephemeral=True)
+            return
+        assert tool_status is not None
 
         try:
             self.logger.info("Executing palace_status command")
@@ -107,6 +130,10 @@ class MemoryPalaceCog(commands.Cog):
             await interaction.response.send_message("You need Manage Server permission to wake up the palace.", ephemeral=True)
             return
 
+        if not self.mempalace_available:
+            await interaction.response.send_message("MemPalace is unavailable. Check dependency compatibility.", ephemeral=True)
+            return
+
         try:
             context = self.get_memory_context("wake up")
             message = f"Waking up with context: {context}"
@@ -117,6 +144,11 @@ class MemoryPalaceCog(commands.Cog):
 
     def get_memory_context(self, user_input: str, guild: Optional[str] = None) -> str:
         """Get formatted memory context for LLM prompts (~300-500 tokens max)."""
+        if not self.mempalace_available:
+            return "Memory context unavailable."
+        assert tool_status is not None
+        assert self.search_memories is not None
+
         try:
             # Build wake-up context using tool_status and search_memories
             status = tool_status()
@@ -157,6 +189,10 @@ class MemoryPalaceCog(commands.Cog):
 
     def is_article_posted(self, url: str, dedup_room: str, palace_path: str) -> bool:
         """Check if article URL is already posted in MemPalace."""
+        if not self.mempalace_available:
+            return False
+        assert self.search_memories is not None
+
         try:
             os.environ["MEMPALACE_PALACE_PATH"] = palace_path
             results = self.search_memories(url, palace_path=palace_path, wing="news-monitor", room=dedup_room)
@@ -167,6 +203,10 @@ class MemoryPalaceCog(commands.Cog):
 
     def mark_article_posted(self, article_dict: dict, dedup_room: str, palace_path: str) -> None:
         """Mark article as posted in MemPalace using its link."""
+        if not self.mempalace_available:
+            return
+        assert tool_add_drawer is not None
+
         try:
             os.environ["MEMPALACE_PALACE_PATH"] = palace_path
             url = article_dict.get("link", "")

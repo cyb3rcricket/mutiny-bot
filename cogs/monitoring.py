@@ -337,9 +337,9 @@ class DockerRestartView(discord.ui.View):
         # Docker names should be simple identifiers; reject anything shell-like.
         return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name or ""))
 
-    def _build_cancel_callback(self, job_id: str):
+    def _build_restart_callback(self, container_name: str):
         async def _callback(interaction: discord.Interaction):
-            await self.cancel_job(interaction, job_id)
+            await self.restart_container(interaction, container_name)
 
         return _callback
 
@@ -390,16 +390,23 @@ class RestartConfirmView(discord.ui.View):
 
 
 class JobCancelView(discord.ui.View):
-    def __init__(self, jobs, bot, cog):
+    def __init__(self, jobs, bot):
         super().__init__()
         self.bot = bot
-        self.cog = cog
         for job in jobs:
-            job_id = job.get("id")
+            job_id = str(job.get("id", "")).strip()
+            if not job_id:
+                continue
             job_name = job.get("name", "Unknown")
             button = discord.ui.Button(label=f"Cancel {job_name}", style=discord.ButtonStyle.red)
-            button.callback = self.cog._build_cancel_callback(job_id)
+            button.callback = self._build_cancel_callback(job_id)
             self.add_item(button)
+
+    def _build_cancel_callback(self, job_id: str):
+        async def _callback(interaction: discord.Interaction):
+            await self.cancel_job(interaction, job_id)
+
+        return _callback
 
     async def cancel_job(self, interaction: discord.Interaction, job_id: str):
         if not MonitoringCog._has_admin_permissions(interaction):
@@ -599,7 +606,7 @@ class MonitoringCog(commands.Cog):
                 embed.add_field(name=f"📅 {name}", value=f"Next: {next_run}", inline=False)
 
             embed.set_footer(text="Mutiny Bot • Local Only")
-            view = JobCancelView(jobs[:10], self.bot, self)
+            view = JobCancelView(jobs[:10], self.bot)
             await interaction.followup.send(embed=embed, view=view)
 
     @app_commands.command(name="history", description="Show recent chat history 📜")

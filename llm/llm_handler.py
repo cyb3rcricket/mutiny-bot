@@ -38,12 +38,12 @@ class LLMHandler:
 
     async def generate_response(self, model: str, messages: list[dict[str, Any]], tools: Optional[list[dict[str, Any]]] = None) -> str:
         # NUCLEAR SYSTEM PROMPT – this MUST be the VERY FIRST message every single time
-        SYSTEM_PROMPT = """You are MutinyBot, a direct, no-nonsense, zero-fluff Discord assistant built for Tommi.
+        SYSTEM_PROMPT = """You are MutinyBot, a friendly, conversational Discord assistant built for Tommi.
 You have real tools (morning briefing, news monitors, Eisenhower task prioritization, MemPalace, population lookup, etc.).
 NEVER output raw JSON, function calls, tool schemas, or {"type": "function"...}.
 NEVER say "simulate", "hypothetical", "for security reasons", "tool error", or mention knowledge cutoffs.
 If you need to use a tool, use it internally and respond ONLY with the final clean answer.
-Respond naturally and concisely in plain English. No code blocks unless explicitly asked."""
+Feel free to chat normally, engage in friendly conversation, and be helpful rather than overly robotic or brief. No code blocks unless explicitly asked."""
 
         # Force clean context - ensure the first message is our ironclad prompt
         filtered_messages = [msg for msg in messages if msg.get("role") != "system"]
@@ -58,6 +58,8 @@ Respond naturally and concisely in plain English. No code blocks unless explicit
             "messages": messages,
             "api_base": self.api_base,
             "stream": False,
+            "max_tokens": 800,
+            "timeout": 45.0,
         }
         if tools:
             completion_kwargs["tools"] = tools
@@ -107,11 +109,18 @@ Respond naturally and concisely in plain English. No code blocks unless explicit
             messages.append({"role": "assistant", "content": getattr(ai_message, "content", "") or "", "tool_calls": [history_tool_call]})
             messages.append({"role": "tool", "tool_call_id": history_tool_call["id"], "name": tool_name, "content": tool_result_str})
             
-            final_response = await litellm.acompletion(
-                model=model,
-                messages=messages,
-                api_base=self.api_base,
-            )
+            try:
+                final_response = await litellm.acompletion(
+                    model=model,
+                    messages=messages,
+                    api_base=self.api_base,
+                    max_tokens=800,
+                    timeout=45.0,
+                )
+            except Exception as e:
+                logger.error(f"LiteLLM error on tool response handling: {e}")
+                return "I encountered a core processor fault while generating the final response."
+            
             final_msg = self._extract_first_message(final_response)
             clean_text = (getattr(final_msg, "content", "") or "").strip()
         else:
@@ -191,6 +200,8 @@ Respond naturally and concisely in plain English. No code blocks unless explicit
                 messages=messages,
                 api_base=self.api_base,
                 stream=False,
+                max_tokens=150,
+                timeout=15.0,
             )
         except Exception:
             logger.exception("History summarization completion failed")

@@ -1,19 +1,38 @@
 """News monitor tool: fetch fresh Google News RSS articles with deduplication."""
 
+import logging
 import os
 import urllib.parse
 from typing import List, Dict, Any
 
 import feedparser
 import litellm
-from mempalace.mcp_server import tool_add_drawer
-from mempalace.searcher import search_memories
 
 from config import DEFAULT_MODEL
 
 
+logger = logging.getLogger("mutiny_bot.tools.news_monitor")
+
+try:
+    from mempalace.mcp_server import tool_add_drawer
+    from mempalace.searcher import search_memories
+except Exception as mempalace_import_error:
+    tool_add_drawer = None
+    search_memories = None
+    _MEMPALACE_IMPORT_ERROR = mempalace_import_error
+else:
+    _MEMPALACE_IMPORT_ERROR = None
+
+
 async def get_fresh_news(search_query: str, dedup_room: str, palace_path: str) -> List[Dict[str, Any]]:
     """Fetch Google News RSS for search_query (last 24h), dedup via MemPalace, return new articles."""
+    if tool_add_drawer is None or search_memories is None:
+        logger.warning(
+            "MemPalace is unavailable for news deduplication: %s",
+            _MEMPALACE_IMPORT_ERROR,
+        )
+        return []
+
     os.environ["MEMPALACE_PALACE_PATH"] = palace_path
 
     encoded_query = urllib.parse.quote_plus(search_query)
