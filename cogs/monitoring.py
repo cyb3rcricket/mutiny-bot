@@ -24,6 +24,7 @@ from llm.models import get_installed_models
 from tools.registry import AVAILABLE_TOOLS, TOOL_SCHEMAS
 from tools.news_monitor import get_fresh_news
 from tools.scheduler_manager import execute_and_broadcast
+from scheduler.scheduler_manager import resume_job
 
 
 def parse_schedule_time(time_str: str):
@@ -1145,14 +1146,16 @@ class MonitoringCog(commands.Cog):
 
         try:
             job.pause()
-            # Schedule resume
+            # Schedule resume using a named function — lambdas cannot be pickled
+            # by the SQLAlchemy jobstore.
             resume_time = datetime.now() + timedelta(hours=hours)
             scheduler.add_job(
-                func=lambda: job.resume(),
+                func=resume_job,
                 trigger="date",
                 run_date=resume_time,
                 id=f"resume_{job_id}",
-                name=f"Resume job {job_id}"
+                name=f"Resume job {job_id}",
+                args=(job_id,),
             )
             embed = discord.Embed(
                 title="⏰ Job Snoozed",
@@ -1359,14 +1362,31 @@ class MonitoringCog(commands.Cog):
             return
 
         scheduler = self.bot.scheduler_manager.scheduler
-        
-        # Create a job that logs the task (for demo)
+
+        # Validate that task maps to a registered tool
+        if task not in AVAILABLE_TOOLS:
+            available = ", ".join(sorted(AVAILABLE_TOOLS.keys())) or "none"
+            embed = discord.Embed(
+                title="❌ Unknown Tool",
+                description=(
+                    f"**{task}** is not a registered tool.\n\n"
+                    f"Available tools: {available}"
+                ),
+                color=0xff0000,
+            )
+            embed.set_footer(text="Mutiny Bot • Local Only")
+            await interaction.response.send_message(embed=embed)
+            return
+
+        # Sanitize task name for use in the job ID (alphanumeric + underscores only)
+        safe_task = re.sub(r"[^A-Za-z0-9_]", "_", task)
         job = scheduler.add_job(
-            func=lambda: print(f"Scheduled task executed: {task}"),
+            execute_and_broadcast,
             trigger=trigger,
-            id=f"scheduled_{task}_{datetime.now().timestamp()}",
+            id=f"auto_{safe_task}_{datetime.now().timestamp()}",
             name=f"Scheduled: {task}",
-            replace_existing=True
+            args=(task,),
+            replace_existing=True,
         )
 
         embed = discord.Embed(
