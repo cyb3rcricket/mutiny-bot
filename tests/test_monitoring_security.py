@@ -12,7 +12,7 @@ stub_news_monitor.get_fresh_news = lambda *args, **kwargs: []
 stub_news_monitor.execute_news_monitor = lambda *args, **kwargs: None
 sys.modules.setdefault("tools.news_monitor", stub_news_monitor)
 
-from cogs.monitoring import DockerRestartView, MonitoringCog, parse_schedule_time
+from cogs.monitoring import DockerRestartView, MonitoringCog, generate_daily_insight, parse_schedule_time
 
 
 class _DummyResponse:
@@ -133,6 +133,20 @@ class AddNewsMonitorScheduleParseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(added_jobs), 1, "Job should be added for valid schedule")
         error_messages = [m for m in interaction.response.messages if m[1]]  # ephemeral = error
         self.assertFalse(error_messages, "No error messages expected for a valid schedule")
+
+
+class DailyInsightSafetyTests(unittest.TestCase):
+    def test_zero_disk_total_does_not_raise(self) -> None:
+        snapshot = {
+            "cpu_values": (0.4, 0.3, 0.2),
+            "disk_free": 10.0,
+            "disk_total": 0.0,
+            "hostname": "test-host",
+        }
+
+        insight = generate_daily_insight(snapshot)
+        self.assertIsInstance(insight, str)
+        self.assertTrue(insight)
 
 
 if __name__ == "__main__":

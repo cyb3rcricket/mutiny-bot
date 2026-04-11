@@ -133,6 +133,49 @@ class LLMHandlerAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(tool_message["content"]), MAX_TOOL_RESULT_CHARS)
         self.assertTrue(tool_message["content"].endswith(TOOL_RESULT_TRUNCATION_SUFFIX))
 
+    async def test_multiple_tool_calls_all_execute_before_final_completion(self) -> None:
+        async def tool_a() -> str:
+            return "result-a"
+
+        async def tool_b() -> str:
+            return "result-b"
+
+        tool_calls = [
+            SimpleNamespace(
+                id="call_a",
+                type="function",
+                function=SimpleNamespace(name="tool_a", arguments="{}"),
+            ),
+            SimpleNamespace(
+                id="call_b",
+                type="function",
+                function=SimpleNamespace(name="tool_b", arguments="{}"),
+            ),
+        ]
+
+        first_response = _completion_response(content="", tool_calls=tool_calls)
+        final_response = _completion_response(content="all done")
+
+        handler = LLMHandler(
+            "http://127.0.0.1:11434",
+            tool_functions={"tool_a": tool_a, "tool_b": tool_b},
+        )
+
+        completion_mock = AsyncMock(side_effect=[first_response, final_response])
+
+        with patch("llm.llm_handler.litellm.acompletion", new=completion_mock):
+            result = await handler.generate_response(
+                model="ollama/qwen2.5-coder:7b",
+                messages=[{"role": "user", "content": "run both"}],
+                tools=[{"type": "function", "function": {"name": "tool_a"}}],
+            )
+
+        self.assertEqual(result, "all done")
+        second_call_messages = completion_mock.call_args_list[1].kwargs["messages"]
+        tool_messages = [msg for msg in second_call_messages if msg.get("role") == "tool"]
+        self.assertEqual(len(tool_messages), 2)
+        self.assertEqual({msg["tool_call_id"] for msg in tool_messages}, {"call_a", "call_b"})
+
 
 if __name__ == "__main__":
     unittest.main()

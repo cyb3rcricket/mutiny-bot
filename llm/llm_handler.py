@@ -72,35 +72,55 @@ class LLMHandler:
 
         # NUCLEAR SANITIZER – kill any tool call leakage
         if getattr(ai_message, "tool_calls", None):
-            # Execute tool(s) silently
-            tool_call = ai_message.tool_calls[0]
-            function_data = getattr(tool_call, "function", None)
-            tool_name = getattr(function_data, "name", "")
-            raw_arguments = getattr(function_data, "arguments", "{}") or "{}"
-            
-            try:
-                tool_result = await self.execute_tool(tool_name, raw_arguments)
-            except asyncio.TimeoutError:
-                tool_result = f"Tool '{tool_name}' timed out."
-                
-            tool_result_str = str(tool_result)
-            if len(tool_result_str) > MAX_TOOL_RESULT_CHARS:
-                trunc_len = MAX_TOOL_RESULT_CHARS - len(TOOL_RESULT_TRUNCATION_SUFFIX)
-                tool_result_str = tool_result_str[:trunc_len] + TOOL_RESULT_TRUNCATION_SUFFIX
-            
-            # Re-create a tool call dict that liteLLM expects in the assistant's context
-            history_tool_call = {
-                "id": getattr(tool_call, "id", f"call_{tool_name}"),
-                "type": getattr(tool_call, "type", "function"),
-                "function": {
-                    "name": tool_name,
-                    "arguments": raw_arguments,
-                },
-            }
-            
-            # Now make a second call with the tool result to get final clean answer
-            messages.append({"role": "assistant", "content": getattr(ai_message, "content", "") or "", "tool_calls": [history_tool_call]})
-            messages.append({"role": "tool", "tool_call_id": history_tool_call["id"], "name": tool_name, "content": tool_result_str})
+            history_tool_calls: list[dict[str, Any]] = []
+            tool_results: list[tuple[str, str, str]] = []
+
+            # Execute all requested tools in this turn and include each result in history.
+            for index, tool_call in enumerate(ai_message.tool_calls):
+                function_data = getattr(tool_call, "function", None)
+                tool_name = getattr(function_data, "name", "")
+                raw_arguments = getattr(function_data, "arguments", "{}") or "{}"
+
+                try:
+                    tool_result = await self.execute_tool(tool_name, raw_arguments)
+                except asyncio.TimeoutError:
+                    tool_result = f"Tool '{tool_name}' timed out."
+
+                tool_result_str = str(tool_result)
+                if len(tool_result_str) > MAX_TOOL_RESULT_CHARS:
+                    trunc_len = MAX_TOOL_RESULT_CHARS - len(TOOL_RESULT_TRUNCATION_SUFFIX)
+                    tool_result_str = tool_result_str[:trunc_len] + TOOL_RESULT_TRUNCATION_SUFFIX
+
+                # Re-create a tool call dict that liteLLM expects in assistant context.
+                tool_call_id = getattr(tool_call, "id", "") or f"call_{tool_name}_{index}"
+                history_tool_call = {
+                    "id": tool_call_id,
+                    "type": getattr(tool_call, "type", "function"),
+                    "function": {
+                        "name": tool_name,
+                        "arguments": raw_arguments,
+                    },
+                }
+                history_tool_calls.append(history_tool_call)
+                tool_results.append((tool_call_id, tool_name, tool_result_str))
+
+            # Make a second call with all tool results to get a clean final answer.
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": getattr(ai_message, "content", "") or "",
+                    "tool_calls": history_tool_calls,
+                }
+            )
+            for tool_call_id, tool_name, tool_result_str in tool_results:
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": tool_name,
+                        "content": tool_result_str,
+                    }
+                )
             
             try:
                 final_response = await litellm.acompletion(

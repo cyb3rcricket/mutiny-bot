@@ -128,11 +128,13 @@ def generate_daily_insight(snapshot: dict[str, Any]) -> str:
             insights.append("😴 Your CPU is taking it easy today.")
 
     if snapshot["disk_free"] is not None:
-        free_percent = (snapshot["disk_free"] / snapshot["disk_total"]) * 100
-        if free_percent < 10:
-            insights.append("💾 Your disk space is running low!")
-        elif free_percent > 80:
-            insights.append("🗂️ You have plenty of disk space available.")
+        disk_total = snapshot.get("disk_total")
+        if isinstance(disk_total, (int, float)) and disk_total > 0:
+            free_percent = (snapshot["disk_free"] / disk_total) * 100
+            if free_percent < 10:
+                insights.append("💾 Your disk space is running low!")
+            elif free_percent > 80:
+                insights.append("🗂️ You have plenty of disk space available.")
 
     if snapshot["hostname"] != "unknown-host":
         insights.append(f"🏠 Running on {snapshot['hostname']} today.")
@@ -354,9 +356,12 @@ class DockerRestartView(discord.ui.View):
             return
 
         try:
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, 
-                lambda: subprocess.run(["docker", "restart", container_name], capture_output=True, text=True, timeout=30)
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["docker", "restart", container_name],
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             if result.returncode == 0:
                 await interaction.response.send_message(f"✅ Container '{container_name}' restarted successfully.", ephemeral=True)
@@ -871,7 +876,7 @@ class MonitoringCog(commands.Cog):
             return
 
         await interaction.response.defer()
-        result = await asyncio.get_event_loop().run_in_executor(None, ping_host, host)
+        result = await asyncio.to_thread(ping_host, host)
 
         if result["status"] == "success":
             embed = discord.Embed(
@@ -953,7 +958,7 @@ class MonitoringCog(commands.Cog):
             return
 
         await interaction.response.defer()
-        containers = await asyncio.get_event_loop().run_in_executor(None, get_docker_containers)
+        containers = await asyncio.to_thread(get_docker_containers)
 
         embed = discord.Embed(title="🐳 Running Docker Containers", color=0x3498db)
         if not containers:
@@ -1010,9 +1015,12 @@ class MonitoringCog(commands.Cog):
         await interaction.response.defer()
 
         try:
-            result = await asyncio.get_event_loop().run_in_executor(
-                None,
-                lambda: subprocess.run(["tail", "-20", log_path], capture_output=True, text=True, timeout=10)
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["tail", "-20", log_path],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode == 0:
                 logs_content = result.stdout.strip()

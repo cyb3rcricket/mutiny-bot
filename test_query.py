@@ -2,6 +2,8 @@ import asyncio
 import litellm
 import sys
 
+__test__ = False
+
 async def test():
     try:
         response = await litellm.acompletion(
