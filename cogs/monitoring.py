@@ -1771,12 +1771,10 @@ class MonitoringCog(commands.Cog):
             return
 
         time_str = f"{frequency} at {time}" if frequency == "daily" else frequency
-        trigger = parse_schedule_time(time_str)
-        if not trigger:
-            await interaction.response.send_message(
-                "Invalid frequency or time format.",
-                ephemeral=True,
-            )
+        try:
+            trigger = parse_schedule_time(time_str)
+        except ValueError as e:
+            await interaction.response.send_message(str(e), ephemeral=True)
             return
 
         palace_path = os.path.expanduser("~/.mutiny/palace")
