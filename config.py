@@ -88,6 +88,12 @@ def validate_startup_config() -> tuple[list[str], list[str]]:
                 "BROADCAST_CHANNEL_ID is not numeric; falling back to 0 (broadcasts disabled)."
             )
 
+    if BOT_OWNER_ID == 0:
+        warnings.append(
+            "BOT_OWNER_ID is not configured (still 0). "
+            "All owner-only commands will be inaccessible until BOT_OWNER_ID is set to your Discord user ID."
+        )
+
     parsed_ollama_url = urlparse(OLLAMA_API_BASE)
     if parsed_ollama_url.scheme not in {"http", "https"} or not parsed_ollama_url.netloc:
         warnings.append(

@@ -440,9 +440,20 @@ class MonitoringCog(commands.Cog):
         return bool(perms and (perms.manage_guild or perms.administrator))
 
     @staticmethod
-    def _is_bot_owner(interaction: discord.Interaction) -> bool:
-        """Allow only the bot owner."""
-        return interaction.user and interaction.user.id == BOT_OWNER_ID
+    def _is_bot_owner(interaction: discord.Interaction) -> tuple[bool, str]:
+        """Allow only the bot owner.
+
+        Returns a ``(allowed, message)`` tuple so callers can surface a
+        helpful error when the check fails for different reasons.
+        """
+        if BOT_OWNER_ID == 0:
+            return False, (
+                "BOT_OWNER_ID is not configured on this bot. "
+                "Ask the server admin to set the BOT_OWNER_ID environment variable."
+            )
+        if not (interaction.user and interaction.user.id == BOT_OWNER_ID):
+            return False, "Only the bot owner can use this command."
+        return True, ""
 
     def _check_channel(self, interaction: discord.Interaction) -> bool:
         if MONITORING_CHANNEL_ID and interaction.channel and interaction.channel.id != MONITORING_CHANNEL_ID:
@@ -686,11 +697,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can run tools directly.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         tool_func = AVAILABLE_TOOLS.get(tool_name)
@@ -742,11 +751,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can view system information.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -856,11 +863,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can ping hosts.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -898,11 +903,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can generate scripts.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -942,11 +945,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can view Docker containers.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -988,11 +989,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can view system logs.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         log_path = LOG_PATHS.get(service.lower())
@@ -1103,11 +1102,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can restart the bot.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         embed = discord.Embed(
@@ -1216,11 +1213,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can get error explanations.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -1265,11 +1260,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can query notes and history.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -1342,11 +1335,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can schedule tasks.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         try:
@@ -1416,11 +1407,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can use AI brainstorming.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -1464,11 +1453,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can list AI tools.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer()
@@ -1595,11 +1582,9 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can post the full command list.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         # Use specified channel or current channel
@@ -1721,11 +1706,9 @@ class MonitoringCog(commands.Cog):
             await self._reject_unavailable(interaction)
             return
 
-        if not self._is_bot_owner(interaction):
-            await interaction.response.send_message(
-                "Only the bot owner can sync commands.",
-                ephemeral=True,
-            )
+        _owner_ok, _owner_msg = self._is_bot_owner(interaction)
+        if not _owner_ok:
+            await interaction.response.send_message(_owner_msg, ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
