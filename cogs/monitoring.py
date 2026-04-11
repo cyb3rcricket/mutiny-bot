@@ -382,7 +382,9 @@ class RestartConfirmView(discord.ui.View):
         await interaction.response.send_message("🔄 Restarting bot...", ephemeral=True)
         # Give time for the message to send
         await asyncio.sleep(1)
-        # Restart the bot
+        # Cleanly shut down the event loop, scheduler, and database before
+        # replacing the process, so SQLite is not left in a dirty state.
+        await self.bot.close()
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
     @discord.ui.button(label="No", style=discord.ButtonStyle.secondary)
