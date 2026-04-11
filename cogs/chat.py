@@ -10,7 +10,7 @@ import discord
 from discord.ext import commands
 
 from config import ALLOWED_MODELS, DEFAULT_MODEL
-from mutiny_bot import get_capabilities_response
+from bot.capabilities import get_capabilities_response
 from tools.scheduler_manager import reset_tool_request_context, set_tool_request_context
 from tools.registry import TOOL_SCHEMAS
 
