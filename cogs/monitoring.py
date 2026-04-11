@@ -22,7 +22,7 @@ from typing import cast, Any, Optional
 from config import MONITORING_CHANNEL_ID, LOG_PATHS, ALLOWED_MODELS, BOT_OWNER_ID
 from llm.models import get_installed_models
 from tools.registry import AVAILABLE_TOOLS, TOOL_SCHEMAS
-from tools.news_monitor import get_fresh_news
+from tools.news_monitor import execute_news_monitor, get_fresh_news
 from tools.scheduler_manager import execute_and_broadcast
 from scheduler.scheduler_manager import resume_job
 
@@ -1799,7 +1799,7 @@ class MonitoringCog(commands.Cog):
         }
 
         scheduler.add_job(
-            "tools.news_monitor:execute_news_monitor",
+            execute_news_monitor,
             trigger=trigger,
             args=[job_data],
             id=job_id,
