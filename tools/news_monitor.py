@@ -25,7 +25,7 @@ else:
 
 
 async def get_fresh_news(search_query: str, dedup_room: str, palace_path: str) -> List[Dict[str, Any]]:
-    """Fetch Google News RSS for search_query (last 24h), dedup via MemPalace, return new articles."""
+    """Fetch Google News RSS for search_query (last 21 days), dedup via MemPalace, return new articles."""
     if tool_add_drawer is None or search_memories is None:
         logger.warning(
             "MemPalace is unavailable for news deduplication: %s",
@@ -36,7 +36,7 @@ async def get_fresh_news(search_query: str, dedup_room: str, palace_path: str) -
     os.environ["MEMPALACE_PALACE_PATH"] = palace_path
 
     encoded_query = urllib.parse.quote_plus(search_query)
-    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en&when=1d"
+    url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en&when=21d"
     feed = feedparser.parse(url)
 
     new_articles = []
