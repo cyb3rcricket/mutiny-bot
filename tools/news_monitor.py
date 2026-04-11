@@ -8,7 +8,7 @@ from typing import List, Dict, Any
 import feedparser
 import litellm
 
-from config import DEFAULT_MODEL
+from config import DEFAULT_MODEL, OLLAMA_API_BASE
 
 
 logger = logging.getLogger("mutiny_bot.tools.news_monitor")
@@ -91,7 +91,8 @@ async def execute_news_monitor(job_data: dict) -> None:
             response = await litellm.acompletion(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=100
+                max_tokens=100,
+                api_base=OLLAMA_API_BASE,
             )
             choices = getattr(response, "choices", [])
             message_obj = getattr(choices[0], "message", None) if choices else None
