@@ -19,7 +19,7 @@ from discord.ext import commands
 from discord import ui
 from typing import cast, Any, Optional
 
-from config import MONITORING_CHANNEL_ID, LOG_PATHS, ALLOWED_MODELS, BOT_OWNER_ID
+from config import MONITORING_CHANNEL_ID, LOG_PATHS, ALLOWED_MODELS, BOT_OWNER_ID, BROADCAST_CHANNEL_ID
 from llm.models import get_installed_models
 from tools.registry import AVAILABLE_TOOLS, TOOL_SCHEMAS
 from tools.news_monitor import execute_news_monitor, get_fresh_news
@@ -1367,6 +1367,22 @@ class MonitoringCog(commands.Cog):
             )
             embed.set_footer(text="Mutiny Bot • Local Only")
             await interaction.response.send_message(embed=embed)
+            return
+
+        # Reject scheduling when no broadcast channel is configured — the job
+        # would silently do nothing when it fires.
+        if not isinstance(BROADCAST_CHANNEL_ID, int) or BROADCAST_CHANNEL_ID <= 0:
+            embed = discord.Embed(
+                title="❌ Broadcast Channel Not Configured",
+                description=(
+                    "**BROADCAST_CHANNEL_ID** is not set in the bot environment.\n\n"
+                    "Scheduled tasks post their results to that channel. "
+                    "Set the environment variable and restart the bot before scheduling tasks."
+                ),
+                color=0xff0000,
+            )
+            embed.set_footer(text="Mutiny Bot • Local Only")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
         # Sanitize task name for use in the job ID (alphanumeric + underscores only)

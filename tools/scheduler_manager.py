@@ -139,6 +139,12 @@ async def schedule_daily_automation(tool_name: str, hour: int, minute: int) -> s
     if authorization_error:
         return authorization_error
 
+    if not isinstance(BROADCAST_CHANNEL_ID, int) or BROADCAST_CHANNEL_ID <= 0:
+        return (
+            "Error: BROADCAST_CHANNEL_ID is not configured. "
+            "Set BROADCAST_CHANNEL_ID in your environment before scheduling automations."
+        )
+
     scheduler, scheduler_error = _get_scheduler_from_context()
     if scheduler_error:
         return scheduler_error
