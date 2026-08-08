@@ -54,15 +54,12 @@ def get_installed_models(force_refresh: bool = False) -> List[str]:
         )
         installed = _parse_ollama_list_output(raw_output)
         filtered = [name for name in CANONICAL_MODELS if name in installed]
-        # Keep bot usable even if ollama is up but list is temporarily empty.
-        _cached_models = filtered or CANONICAL_MODELS.copy()
+        _cached_models = filtered
         _cached_at = now
         return _cached_models.copy()
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        # Ollama missing/down: return cached set or canonical fallback.
-        if _cached_models:
-            return _cached_models.copy()
-        return CANONICAL_MODELS.copy()
+        # Ollama missing/down: return empty list rather than spoofing availability.
+        return []
 
 
 def get_litellm_model_ids(force_refresh: bool = False) -> List[str]:
@@ -73,5 +70,7 @@ def get_litellm_model_ids(force_refresh: bool = False) -> List[str]:
 def get_default_litellm_model(force_refresh: bool = False) -> str:
     """Return the preferred default litellm model ID."""
     installed = get_installed_models(force_refresh=force_refresh)
+    if not installed:
+        return f"ollama/{DEFAULT_CANONICAL_MODEL}"
     preferred = DEFAULT_CANONICAL_MODEL if DEFAULT_CANONICAL_MODEL in installed else installed[0]
     return f"ollama/{preferred}"
