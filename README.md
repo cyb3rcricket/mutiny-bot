@@ -3,7 +3,7 @@
 You are not here to rent intelligence from somebody else's server farm.
 You are here to take it back.
 
-Mutiny Bot is a Discord operations bot for people who want control, speed, and privacy without compromise. It runs on local Ollama models through `litellm`, drives real automation with slash commands, and keeps your memory and configuration in your own stack.
+Mutiny Bot is a Discord operations bot built for control, speed, and local-first execution. Discord handles conversation transport, while AI model inference, memory, and configuration stay in your own stack.
 
 No cloud dependency for inference. No mystery pipeline. No black box decisions about your data. You run it. You own it. You ship it.
 
@@ -11,7 +11,7 @@ No cloud dependency for inference. No mystery pipeline. No black box decisions a
 
 - **Local Ollama models only** for AI inference. No remote LLM provider required.
 - **Dynamic model detection** via installed Ollama models, with canonical support for `gemma4:e4b`, `phi4-mini:latest`, and `qwen2.5-coder:7b`.
-- **Privacy-first architecture**: model inference and memory processing happen on your machine.
+- **Local AI inference and memory**: model inference and memory processing happen on your machine. Messages pass through Discord for transport, but are never sent to a cloud LLM provider.
 - **SQLite-backed state** for chat history, bot configuration, and operational persistence.
 - **MemPalace-powered long-term memory** for deduplication and semantic recall (vector memory backed by ChromaDB under the hood).
 - **APScheduler + SQLAlchemy job persistence** for durable, recurring automations.
@@ -19,7 +19,7 @@ No cloud dependency for inference. No mystery pipeline. No black box decisions a
 - **Broadcast queue system** to safely push scheduled outputs into Discord channels.
 - **System operations command surface** for logs, Docker visibility, host checks, and health insight.
 - **AI utility workflows** for script generation, error explanation, brainstorming, and structured tooling.
-- **Fully local runtime footprint** for model work and memory storage, designed for teams that do not want to hand their internal context to the cloud.
+- **Local AI runtime footprint** for model work and memory storage, designed for teams that do not want to hand their internal context to remote LLM providers.
 
 ## Quick Start / Installation
 
@@ -165,7 +165,7 @@ Startup log confirms:
 
 - If `DISCORD_BOT_TOKEN` is missing or empty, startup validation will fail and the bot will not launch.
 - Conversation history and configuration are persisted locally in SQLite.
-- Inference is local-only through Ollama via `litellm` using your configured `OLLAMA_API_BASE`.
+- Discord handles conversation transport; model inference is local-only through Ollama via `litellm` using your configured `OLLAMA_API_BASE`.
 
 ## Closing Statement
 
