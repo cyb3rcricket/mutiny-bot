@@ -11,12 +11,14 @@ from discord.ext import commands
 from discord import app_commands
 import time
 from collections import defaultdict
-from config import DB_PATH, OLLAMA_API_BASE, intents
+from config import DB_PATH, OLLAMA_API_BASE
 from database.db import DatabaseManager
 from llm.llm_handler import LLMHandler
-from llm.models import get_installed_models
 from scheduler.scheduler_manager import SchedulerManager
 from tools.registry import AVAILABLE_TOOLS
+
+intents = discord.Intents.default()
+intents.message_content = True
 
 
 logger = logging.getLogger("mutiny_bot")

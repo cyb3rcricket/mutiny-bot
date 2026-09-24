@@ -9,7 +9,7 @@ from typing import Any
 import discord
 from discord.ext import commands
 
-from config import ALLOWED_MODELS, DEFAULT_MODEL
+from llm.models import get_installed_models
 from bot.capabilities import get_capabilities_response
 from tools.scheduler_manager import reset_tool_request_context, set_tool_request_context
 from tools.registry import TOOL_SCHEMAS
@@ -262,9 +262,10 @@ class ChatCog(commands.Cog):
             await self.bot.db_manager.insert_history_message(user_id=user_id, role="user", content=message.content)
             user_history = await self.bot.db_manager.get_user_recent_history(user_id=user_id, limit=10)
             active_model = await self.bot.db_manager.get_current_model()
-            if active_model not in ALLOWED_MODELS:
-                active_model = DEFAULT_MODEL
-                await self.bot.db_manager.update_config("model", DEFAULT_MODEL)
+            installed = get_installed_models()
+            if installed and active_model not in installed:
+                # Keep the saved selection. A temporary discovery miss must not overwrite it.
+                pass
 
             system_prompt = await self.bot.db_manager.get_system_prompt()
             messages_for_ai = [

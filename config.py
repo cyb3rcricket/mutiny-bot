@@ -1,37 +1,21 @@
-"""Shared configuration for MutinyBot."""
+"""Side-effect-light local configuration.
+
+Importing this module reads environment variables and nothing else. It does
+not import Discord, discover models, or open a network connection.
+"""
+
+from __future__ import annotations
 
 import os
 from urllib.parse import urlparse
 
-import discord
 from dotenv import load_dotenv
 
-from llm.models import get_installed_models
-
-# Load environment variables from a local .env file before reading settings.
 load_dotenv()
 
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-
-# Parse BROADCAST_CHANNEL_ID safely at import time. If the env var is missing,
-# empty, or non-numeric (e.g. "none"), fall back to 0 instead of raising.
-_raw_broadcast = os.getenv("BROADCAST_CHANNEL_ID", "")
-try:
-    if isinstance(_raw_broadcast, str) and _raw_broadcast.strip().lower() in ("", "none", "null"):
-        BROADCAST_CHANNEL_ID = 0
-    else:
-        BROADCAST_CHANNEL_ID = int(_raw_broadcast)
-except (TypeError, ValueError):
-    BROADCAST_CHANNEL_ID = 0
-OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434")
-
-# Timezone used by scheduled automation tools (IANA tz name, e.g. "America/Chicago", "UTC").
-AUTOMATION_TIMEZONE = os.getenv("AUTOMATION_TIMEZONE", "America/Chicago").strip() or "America/Chicago"
-
-_installed_models = get_installed_models()
-ALLOWED_MODELS = tuple(_installed_models)
-DEFAULT_MODEL = _installed_models[0] if _installed_models else "gemma4:e4b"
-DEFAULT_SYSTEM_PROMPT = (
+# Exact historical default. Migration replaces a stored prompt only when it
+# matches this string, so the text must not drift.
+LEGACY_DEFAULT_SYSTEM_PROMPT = (
     "You are MutinyBot, a friendly and conversational Discord assistant. Respond naturally and helpfully to the user. "
     "\n\nYou are MutinyBot, a practical IT admin assistant here to help the user. "
     "Be friendly, conversational, and action-oriented. "
@@ -41,24 +25,42 @@ DEFAULT_SYSTEM_PROMPT = (
     "When ending casual conversations, ask how YOU can help the user, not how the user can help you. "
     "Only use tools when the user explicitly requests automation tasks like scheduling or listing jobs."
 )
-DB_PATH = "mutiny.db"
+
+DEFAULT_SYSTEM_PROMPT = (
+    "You are Mutiny, a local assistant running on this machine. "
+    "Open with the answer in one or two direct sentences, then add only the detail that was asked for. "
+    "When the user asks for JSON, code, or another exact format, return that format unchanged. "
+    "Do not invent citations, tool results, or facts you were not given. "
+    "You cannot browse the web or leave this machine."
+)
+
+# Preference label only. Availability comes from runtime discovery.
+DEFAULT_MODEL = "gemma4:e4b"
+
+DB_PATH = os.getenv("MUTINY_DB_PATH", "mutiny.db")
 SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "mutiny_scheduler.db")
-
-# Bot owner Discord user ID for privileged commands
-BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0"))  # Replace with your actual Discord user ID
-
-intents = discord.Intents.default()
-intents.message_content = True
-
-# Maximum number of messages to keep in full context before summarizing
+PALACE_PATH = os.path.expanduser(os.getenv("MUTINY_PALACE_PATH", "~/.mutiny/palace"))
+BIND_HOST = os.getenv("MUTINY_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1"
+PORT = int(os.getenv("MUTINY_PORT", "8765"))
+OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434").strip()
+AUTOMATION_TIMEZONE = os.getenv("AUTOMATION_TIMEZONE", "America/Chicago").strip() or "America/Chicago"
+OUTBOUND_ENABLED = os.getenv("MUTINY_OUTBOUND_ENABLED", "0").strip().lower() in {"1", "true", "yes"}
 MAX_HISTORY_MESSAGES = 12
+MAX_INPUT_CHARS = 32_000
 
-# ID of the Discord channel where you want /jobs, /history, and /status to work
-# Right-click your monitoring channel → Copy ID, paste the number here.
-# Leave as None for now so the commands work in every channel.
+# Transitional messenger settings. The Discord process still reads these until
+# cutover. They are plain values, not a Discord client.
+TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+_raw_broadcast = os.getenv("BROADCAST_CHANNEL_ID", "")
+try:
+    if isinstance(_raw_broadcast, str) and _raw_broadcast.strip().lower() in ("", "none", "null"):
+        BROADCAST_CHANNEL_ID = 0
+    else:
+        BROADCAST_CHANNEL_ID = int(_raw_broadcast)
+except (TypeError, ValueError):
+    BROADCAST_CHANNEL_ID = 0
+BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0") or "0")
 MONITORING_CHANNEL_ID = None
-
-# Log file paths for /logs command
 LOG_PATHS = {
     "syslog": "/var/log/syslog",
     "auth": "/var/log/auth.log",
@@ -70,9 +72,31 @@ LOG_PATHS = {
     "postgresql": "/var/log/postgresql/postgresql.log",
 }
 
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def is_loopback_host(host: str | None) -> bool:
+    return (host or "").strip().lower() in LOOPBACK_HOSTS
+
+
+def ollama_endpoint_error(api_base: str = OLLAMA_API_BASE) -> str | None:
+    """Return an error when the Ollama URL is not a loopback HTTP endpoint."""
+    parsed = urlparse(api_base)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return "OLLAMA_API_BASE must be an http or https URL."
+    if not is_loopback_host(parsed.hostname):
+        return "OLLAMA_API_BASE must point at a loopback address."
+    return None
+
+
+def bind_host_error(host: str = BIND_HOST) -> str | None:
+    if not is_loopback_host(host):
+        return "MUTINY_BIND_HOST must be a loopback address. LAN bind is not available."
+    return None
+
 
 def validate_startup_config() -> tuple[list[str], list[str]]:
-    """Validate startup configuration and return (errors, warnings)."""
+    """Validate transitional process startup. Returns (errors, warnings)."""
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -94,10 +118,8 @@ def validate_startup_config() -> tuple[list[str], list[str]]:
             "All owner-only commands will be inaccessible until BOT_OWNER_ID is set to your Discord user ID."
         )
 
-    parsed_ollama_url = urlparse(OLLAMA_API_BASE)
-    if parsed_ollama_url.scheme not in {"http", "https"} or not parsed_ollama_url.netloc:
-        warnings.append(
-            "OLLAMA_API_BASE does not look like a valid http/https URL; API calls may fail."
-        )
+    ollama_error = ollama_endpoint_error()
+    if ollama_error:
+        warnings.append(ollama_error)
 
     return errors, warnings

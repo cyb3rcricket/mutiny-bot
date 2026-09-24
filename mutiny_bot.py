@@ -36,9 +36,9 @@ _KNOWN_RUNTIME_DEPENDENCIES = {
 }
 
 try:
-    from bot.bot import MutinyBot
+    from bot.bot import MutinyBot, intents
     from bot.capabilities import get_capabilities_response  # noqa: F401
-    from config import TOKEN, intents, validate_startup_config
+    from config import TOKEN, validate_startup_config
     import tools.task_prioritizer  # noqa: F401
 except ModuleNotFoundError as dependency_error:
     missing_name = str(getattr(dependency_error, "name", "") or "")

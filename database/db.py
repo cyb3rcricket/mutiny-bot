@@ -6,7 +6,7 @@ from typing import Optional
 
 import aiosqlite
 
-from config import ALLOWED_MODELS, DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT
+from config import DEFAULT_SYSTEM_PROMPT
 
 
 MAX_STORED_CONTENT_CHARS = 8000
@@ -105,13 +105,15 @@ class DatabaseManager:
             )
             """
         )
+        from llm.models import get_installed_models, select_default_model
+
         await db.execute(
             """
             INSERT INTO bot_config (key, value)
             VALUES ('model', ?)
             ON CONFLICT(key) DO NOTHING
             """,
-            (DEFAULT_MODEL,),
+            (select_default_model(get_installed_models()),),
         )
         await db.execute(
             """
@@ -149,14 +151,13 @@ class DatabaseManager:
         return str(row[0])
 
     async def get_current_model(self) -> str:
-        """Read and validate the configured model from SQLite."""
-        selected_model = await self.get_config("model", DEFAULT_MODEL)
-
-        if selected_model not in ALLOWED_MODELS:
-            await self.update_config("model", DEFAULT_MODEL)
-            return DEFAULT_MODEL
-
-        return selected_model
+        """Return the saved model without rewriting it when discovery fails or disagrees."""
+        db = await self._get_db()
+        cursor = await db.execute("SELECT value FROM bot_config WHERE key = ?", ("model",))
+        row = await cursor.fetchone()
+        if not row or row[0] is None:
+            return ""
+        return str(row[0])
 
     async def get_system_prompt(self) -> str:
         """Read the active system prompt from SQLite."""

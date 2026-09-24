@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any
 
-import discord
-from discord import app_commands
-from discord.ext import commands
-
-from tools.registry import ai_tool
+from tools.registry import ToolPolicy, ai_tool
 
 
 PRIORITY_KEYWORDS = {
@@ -245,6 +240,7 @@ def should_trigger_prioritizer(user_text: str) -> bool:
         "Classify tasks with a real Eisenhower urgent/important matrix and return concrete prioritized next actions. "
         "Use this when the user asks about Eisenhower, urgency, priorities, task triage, or decision-making."
     ),
+    policy=ToolPolicy(),
     parameters={
         "type": "object",
         "properties": {
@@ -274,86 +270,3 @@ async def prioritize_tasks(tasks: list[dict[str, Any]]) -> str:
     normalized_tasks = [_normalize_task(task) for task in tasks if isinstance(task, dict)]
     prioritizer = EisenhowerPrioritizer()
     return prioritizer.build_report(normalized_tasks)
-
-
-class TaskPrioritizerCog(commands.Cog):
-    """Slash command + intent bridge for Eisenhower prioritization."""
-
-    def __init__(self, bot: Any) -> None:
-        self.bot = bot
-
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message) -> None:
-        """Inject a one-time intent hint so normal chat can trigger prioritize_tasks."""
-        if message.author.bot:
-            return
-
-        if not should_trigger_prioritizer(message.content):
-            return
-
-        user_id = str(message.author.id)
-        hint = (
-            "Conversation mode: user requested real prioritization. "
-            "If tasks are present, call prioritize_tasks and return concrete actions. "
-            "If missing tasks, ask for name, description, due_time, and user_tags."
-        )
-        await self.bot.db_manager.insert_history_message(user_id=user_id, role="system", content=hint)
-
-    @app_commands.command(
-        name="prioritize_tasks",
-        description="Prioritize tasks using the Eisenhower urgent/important matrix.",
-    )
-    @app_commands.describe(
-        tasks_json=(
-            "JSON array of tasks: [{\"name\":\"...\",\"description\":\"...\",\"due_time\":\"YYYY-MM-DD HH:MM\",\"user_tags\":[\"important\"]}]"
-        )
-    )
-    async def prioritize_tasks_command(self, interaction: discord.Interaction, tasks_json: str) -> None:
-        """Slash command for deterministic Eisenhower prioritization."""
-        try:
-            payload = json.loads(tasks_json)
-        except json.JSONDecodeError:
-            await interaction.response.send_message(
-                "Invalid JSON. Provide a JSON array of task objects.",
-                ephemeral=True,
-            )
-            return
-
-        if not isinstance(payload, list):
-            await interaction.response.send_message(
-                "Invalid payload. Expected a JSON array of task objects.",
-                ephemeral=True,
-            )
-            return
-
-        tasks: list[dict[str, Any]] = []
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
-            task = {
-                "name": str(item.get("name", "")).strip(),
-                "description": str(item.get("description", "")).strip(),
-                "due_time": str(item.get("due_time", "")).strip(),
-                "user_tags": item.get("user_tags", []) if isinstance(item.get("user_tags", []), list) else [],
-            }
-            if task["name"]:
-                tasks.append(task)
-
-        if not tasks:
-            await interaction.response.send_message(
-                "No valid tasks found. Include at least one task with a non-empty name.",
-                ephemeral=True,
-            )
-            return
-
-        result = await prioritize_tasks(tasks)
-        # Keep slash output safe for Discord limits.
-        if len(result) > 1900:
-            result = result[:1900].rstrip() + "..."
-
-        await interaction.response.send_message(result)
-
-
-async def setup(bot: Any) -> None:
-    """Register slash command and chat intent hook for task prioritization."""
-    await bot.add_cog(TaskPrioritizerCog(bot))

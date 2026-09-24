@@ -6,7 +6,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from config import ALLOWED_MODELS
 from llm.models import get_installed_models
 
 
@@ -44,9 +43,10 @@ class AdminCog(commands.Cog):
             )
             return
 
-        if model_name not in ALLOWED_MODELS:
+        allowed_models = get_installed_models(force_refresh=True)
+        if model_name not in allowed_models:
             await interaction.response.send_message(
-                f"Invalid model. Allowed models: {', '.join(ALLOWED_MODELS)}",
+                f"Invalid model. Allowed models: {', '.join(allowed_models)}",
                 ephemeral=True,
             )
             return

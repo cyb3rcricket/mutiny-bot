@@ -7,6 +7,10 @@ from collections.abc import Callable
 from inspect import isawaitable
 from typing import Any, Optional
 
+from core.privacy import bootstrap
+
+bootstrap()
+
 import litellm
 from config import DEFAULT_SYSTEM_PROMPT, MAX_HISTORY_MESSAGES
 

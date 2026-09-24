@@ -13,7 +13,7 @@ import litellm
 from apscheduler.jobstores.base import JobLookupError
 
 from config import AUTOMATION_TIMEZONE, BROADCAST_CHANNEL_ID, DB_PATH
-from tools.registry import AVAILABLE_TOOLS, ai_tool
+from tools.registry import AVAILABLE_TOOLS, ToolPolicy, ai_tool
 from tools.news_monitor import get_fresh_news
 
 CURRENT_TOOL_USER_ID: ContextVar[Optional[str]] = ContextVar("current_tool_user_id", default=None)
@@ -114,6 +114,7 @@ async def execute_and_broadcast(tool_name: str, *args) -> str:
 @ai_tool(
     name="schedule_daily_automation",
     description="Schedule a registered AI tool to run daily at a specific time",
+    policy=ToolPolicy(mutation=True),
     parameters={
         "type": "object",
         "properties": {
@@ -193,6 +194,7 @@ async def schedule_daily_automation(tool_name: str, hour: int, minute: int) -> s
         "properties": {},
         "required": [],
     },
+    policy=ToolPolicy(manual=True),
 )
 async def list_active_automations() -> str:
     """Return a formatted list of all active scheduled jobs."""
@@ -224,6 +226,7 @@ async def list_active_automations() -> str:
 @ai_tool(
     name="stop_automation",
     description="Stop and remove a scheduled automation by job ID",
+    policy=ToolPolicy(mutation=True),
     parameters={
         "type": "object",
         "properties": {

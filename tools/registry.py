@@ -1,11 +1,23 @@
 """Registry for MutinyBot AI tool functions and their JSON schemas."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, Optional
 
 AVAILABLE_TOOLS: dict[str, Callable[..., Any]] = {}
 TOOL_SCHEMAS: list[dict[str, Any]] = []
+TOOL_POLICIES: dict[str, "ToolPolicy"] = {}
 _TOOL_SCHEMAS_BY_NAME: dict[str, dict[str, Any]] = {}
+
+
+@dataclass(frozen=True)
+class ToolPolicy:
+    """Explicit execution policy. Defaults refuse manual use, scheduling, network, and mutation."""
+
+    manual: bool = False
+    schedulable: bool = False
+    network: bool = False
+    mutation: bool = False
 
 
 def _normalize_parameters(parameters: Optional[dict[str, Any]]) -> dict[str, Any]:
@@ -42,9 +54,11 @@ def register_ai_tool(
     description: str,
     parameters: Optional[dict[str, Any]],
     func: Callable[..., Any],
+    policy: Optional[ToolPolicy] = None,
 ) -> Callable[..., Any]:
     """Register (or replace) a tool and keep tool schemas deduplicated by name."""
     AVAILABLE_TOOLS[name] = func
+    TOOL_POLICIES[name] = policy or ToolPolicy()
     _TOOL_SCHEMAS_BY_NAME[name] = build_tool_schema(name, description, parameters)
 
     # Keep legacy TOOL_SCHEMAS list in sync for callers that read it directly.
@@ -53,7 +67,13 @@ def register_ai_tool(
     return func
 
 
-def ai_tool(name: str, description: str, parameters: dict[str, Any]) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+def ai_tool(
+    name: str,
+    description: str,
+    parameters: dict[str, Any],
+    *,
+    policy: Optional[ToolPolicy] = None,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Register a function as an AI tool and store its schema for model tool-calling."""
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -62,6 +82,7 @@ def ai_tool(name: str, description: str, parameters: dict[str, Any]) -> Callable
             description=description,
             parameters=parameters,
             func=func,
+            policy=policy,
         )
 
     return decorator

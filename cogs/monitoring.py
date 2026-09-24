@@ -19,7 +19,7 @@ from discord.ext import commands
 from discord import ui
 from typing import cast, Any, Optional
 
-from config import MONITORING_CHANNEL_ID, LOG_PATHS, ALLOWED_MODELS, BOT_OWNER_ID, BROADCAST_CHANNEL_ID
+from config import MONITORING_CHANNEL_ID, LOG_PATHS, BOT_OWNER_ID, BROADCAST_CHANNEL_ID
 from llm.models import get_installed_models
 from tools.registry import AVAILABLE_TOOLS, TOOL_SCHEMAS
 from tools.news_monitor import execute_news_monitor, get_fresh_news
@@ -1085,10 +1085,11 @@ class MonitoringCog(commands.Cog):
             )
             return
 
-        if model_name not in ALLOWED_MODELS:
+        allowed_models = get_installed_models(force_refresh=True)
+        if model_name not in allowed_models:
             embed = discord.Embed(
                 title="❌ Invalid Model",
-                description=f"Model '{model_name}' is not in the allowed models list.\n\nAllowed models: {', '.join(ALLOWED_MODELS)}",
+                description=f"Model '{model_name}' is not in the allowed models list.\n\nAllowed models: {', '.join(allowed_models)}",
                 color=0x3498db
             )
             embed.set_footer(text="Mutiny Bot • Local Only")
