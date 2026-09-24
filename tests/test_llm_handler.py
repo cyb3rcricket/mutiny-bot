@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from llm.llm_handler import (
+    LLMError,
     LLMHandler,
     MAX_TOOL_RESULT_CHARS,
     TOOL_RESULT_TRUNCATION_SUFFIX,
@@ -31,15 +32,18 @@ class LLMHandlerAsyncTests(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "llm.llm_handler.litellm.acompletion",
-            new=AsyncMock(side_effect=Exception("offline")),
+            new=AsyncMock(side_effect=Exception("offline SENTINEL prompt should not be logged")),
         ):
-            result = await handler.generate_response(
-                model="ollama/qwen2.5-coder:7b",
-                messages=messages,
-                tools=None,
-            )
+            with self.assertRaises(LLMError) as raised:
+                await handler.generate_response(
+                    model="ollama/qwen2.5-coder:7b",
+                    messages=messages,
+                    tools=None,
+                )
 
-        self.assertIn("could not reach the local ai model", result.lower())
+        self.assertEqual(raised.exception.code, "model_unavailable")
+        self.assertTrue(raised.exception.retryable)
+        self.assertNotIn("SENTINEL", raised.exception.message)
 
     async def test_tool_timeout_generates_tool_result_and_returns_final_response(self) -> None:
         async def slow_tool() -> str:
@@ -175,6 +179,48 @@ class LLMHandlerAsyncTests(unittest.IsolatedAsyncioTestCase):
         tool_messages = [msg for msg in second_call_messages if msg.get("role") == "tool"]
         self.assertEqual(len(tool_messages), 2)
         self.assertEqual({msg["tool_call_id"] for msg in tool_messages}, {"call_a", "call_b"})
+
+    async def test_legitimate_json_is_preserved(self) -> None:
+        handler = LLMHandler("http://127.0.0.1:11434")
+        payload = '{"status": "ok", "items": [1, 2]}'
+        with patch(
+            "llm.llm_handler.litellm.acompletion",
+            new=AsyncMock(return_value=_completion_response(content=payload)),
+        ):
+            result = await handler.generate_response(
+                model="ollama/qwen2.5-coder:7b",
+                messages=[{"role": "user", "content": "return json"}],
+                tools=None,
+            )
+        self.assertEqual(result, payload)
+
+    async def test_tool_outside_allowlist_is_not_executed(self) -> None:
+        called = {"count": 0}
+
+        async def secret_tool() -> str:
+            called["count"] += 1
+            return "secret"
+
+        tool_call = SimpleNamespace(
+            id="call_secret",
+            type="function",
+            function=SimpleNamespace(name="secret_tool", arguments="{}"),
+        )
+        handler = LLMHandler("http://127.0.0.1:11434", tool_functions={"secret_tool": secret_tool})
+        completion_mock = AsyncMock(
+            side_effect=[
+                _completion_response(content="", tool_calls=[tool_call]),
+                _completion_response(content="refused"),
+            ]
+        )
+        with patch("llm.llm_handler.litellm.acompletion", new=completion_mock):
+            result = await handler.generate_response(
+                model="ollama/qwen2.5-coder:7b",
+                messages=[{"role": "user", "content": "run it"}],
+                tools=[{"type": "function", "function": {"name": "get_morning_briefing"}}],
+            )
+        self.assertEqual(result, "refused")
+        self.assertEqual(called["count"], 0)
 
 
 if __name__ == "__main__":

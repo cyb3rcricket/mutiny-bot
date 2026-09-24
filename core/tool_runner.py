@@ -38,13 +38,14 @@ def manual_tool_schemas() -> list[dict[str, Any]]:
 
 
 def assert_manual_execution(name: str) -> None:
-    if name not in MANUAL_TOOL_NAMES or name not in AVAILABLE_TOOLS and name not in {"recall", "ask_notes"}:
+    if name not in MANUAL_TOOL_NAMES:
         raise ToolRejected("tool_not_allowed", "That tool is not available.")
-    policy = policy_for(name)
     if name in {"recall", "ask_notes"}:
         return
-    if not policy.manual or policy.network:
-        raise ToolRejected("tool_not_allowed", "That tool is not available.")
+    if name in AVAILABLE_TOOLS:
+        policy = policy_for(name)
+        if not policy.manual or policy.network:
+            raise ToolRejected("tool_not_allowed", "That tool is not available.")
 
 
 def assert_schedulable(name: str) -> None:

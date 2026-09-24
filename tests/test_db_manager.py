@@ -4,7 +4,8 @@ import os
 import tempfile
 import unittest
 
-from database.db import DatabaseManager, MAX_STORED_CONTENT_CHARS, TRUNCATION_SUFFIX
+from config import MAX_INPUT_CHARS
+from database.db import DatabaseManager, InputTooLong
 
 
 class DatabaseManagerAsyncTests(unittest.IsolatedAsyncioTestCase):
@@ -26,14 +27,26 @@ class DatabaseManagerAsyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(history[0]["role"], "user")
         self.assertEqual(history[1]["content"], "world")
 
-    async def test_oversized_content_is_truncated(self) -> None:
-        oversized = "a" * (MAX_STORED_CONTENT_CHARS + 200)
-        await self.db_manager.insert_history_message("u2", "assistant", oversized)
+    async def test_oversized_input_is_rejected_and_long_output_is_kept(self) -> None:
+        long_output = "z" * (MAX_INPUT_CHARS + 500)
+        await self.db_manager.insert_message(
+            (await self.db_manager.create_thread("notes"))["id"],
+            "assistant",
+            long_output,
+            enforce_limit=False,
+        )
+        oversized = "a" * (MAX_INPUT_CHARS + 1)
+        with self.assertRaises(InputTooLong):
+            await self.db_manager.insert_history_message("u2", "user", oversized)
 
-        history = await self.db_manager.get_user_recent_history("u2", limit=1)
-        stored = history[0]["content"]
-        self.assertEqual(len(stored), MAX_STORED_CONTENT_CHARS)
-        self.assertTrue(stored.endswith(TRUNCATION_SUFFIX))
+        thread = await self.db_manager.create_thread("kept")
+        stored = await self.db_manager.insert_message(
+            thread["id"],
+            "assistant",
+            "b" * 9000,
+            enforce_limit=False,
+        )
+        self.assertEqual(len(stored["content"]), 9000)
 
     async def test_get_user_recent_history_empty_user_id_returns_empty(self) -> None:
         await self.db_manager.insert_history_message("u1", "user", "hello")

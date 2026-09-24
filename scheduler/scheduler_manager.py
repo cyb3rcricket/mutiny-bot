@@ -1,151 +1,246 @@
-"""Scheduler manager for MutinyBot APScheduler and broadcast operations."""
+"""Local APScheduler lifecycle. Jobs persist in SQLite and results persist as runs."""
 
-import asyncio
+from __future__ import annotations
+
 import logging
-from typing import Any, cast, Optional
+import os
+from datetime import datetime
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import discord
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from discord.ext import tasks
+from apscheduler.triggers.cron import CronTrigger
 
-from config import BROADCAST_CHANNEL_ID, SCHEDULER_DB_PATH
-from scheduler.broadcast_utils import split_broadcast_chunks
+from config import AUTOMATION_TIMEZONE, LEGACY_SCHEDULER_DB_PATH, SCHEDULER_DB_PATH
+from core.tool_runner import ToolRejected, assert_schedulable
+from database.db import DatabaseManager
+from scheduler.execution import bind_database, run_scheduled_job
 
 try:
     from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-except ImportError:  # pragma: no cover - exercised in dependency-limited runtime only
+except ImportError:  # pragma: no cover
     SQLAlchemyJobStore = None
 
+logger = logging.getLogger("mutiny_bot.scheduler")
+_LEGACY_MARKERS = (
+    b"tools.scheduler_manager:execute_and_broadcast",
+    b"tools.news_monitor:execute_news_monitor",
+    b"scheduler.scheduler_manager:resume_job",
+)
 
-# Module-level scheduler reference so named callback functions (e.g. resume_job)
-# can access the running scheduler without capturing objects in unpicklable lambdas.
-_scheduler_ref: Optional[Any] = None
+
+class SchedulerUnavailable(RuntimeError):
+    """Raised when a schedule cannot be stored durably."""
 
 
 def resume_job(job_id: str) -> None:
-    """Resume a previously paused job by ID.
+    """Legacy pickled callback. It never resumes a job on its own."""
+    logger.warning("Ignored legacy resume_job callback for %s", job_id)
 
-    Used as a picklable named callback by /snooze-job instead of a lambda.
-    The scheduler reference is populated when SchedulerManager is instantiated.
-    """
-    if _scheduler_ref is not None:
-        _scheduler_ref.resume_job(job_id)
-    else:
-        logging.getLogger("mutiny_bot.scheduler").warning(
-            "resume_job called but _scheduler_ref is not set (job_id=%s)", job_id
-        )
+
+def job_store_url(path: str) -> str:
+    absolute = os.path.abspath(path)
+    return f"sqlite:///{absolute}"
+
+
+def legacy_markers_present(path: str) -> bool:
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        with open(path, "rb") as handle:
+            blob = handle.read()
+    except OSError:
+        return False
+    return any(marker in blob for marker in _LEGACY_MARKERS)
 
 
 class SchedulerManager:
-    """Handles scheduling and broadcast queue for the bot."""
+    """One scheduler process. Persistence is required; there is no memory fallback."""
 
-    def __init__(self, bot: Any) -> None:
-        global _scheduler_ref
-        self.bot = bot
-        self._logger = logging.getLogger("mutiny_bot.scheduler")
-        if SQLAlchemyJobStore is not None:
-            # Keep scheduler persistence separate from chat/config DB writes.
-            jobstore_url = f"sqlite:///{SCHEDULER_DB_PATH}"
-            jobstores = {"default": SQLAlchemyJobStore(url=jobstore_url)}
-            self.scheduler = AsyncIOScheduler(jobstores=jobstores)
-        else:
-            self._logger.warning(
-                "SQLAlchemyJobStore is unavailable; using in-memory scheduler jobs. "
-                "Install SQLAlchemy for persistent schedules."
-            )
-            self.scheduler = AsyncIOScheduler()
-        # Set the scheduler on the bot for tools to access
-        self.bot.scheduler = self.scheduler
-        # Expose scheduler to module-level callbacks (e.g. resume_job)
-        _scheduler_ref = self.scheduler
+    def __init__(
+        self,
+        db: DatabaseManager,
+        scheduler_db_path: str = SCHEDULER_DB_PATH,
+        legacy_scheduler_db_path: str = LEGACY_SCHEDULER_DB_PATH,
+    ) -> None:
+        self.db = db
+        self.scheduler_db_path = scheduler_db_path
+        self.legacy_scheduler_db_path = legacy_scheduler_db_path
+        self.scheduler: AsyncIOScheduler | None = None
+        self.available = False
+        self.unavailable_reason = ""
+        self.legacy_jobs_pending = os.path.exists(legacy_scheduler_db_path)
 
     async def start_scheduler(self) -> None:
-        """Start the scheduler if not already running."""
-        if not self.scheduler.running:
-            self.scheduler.start()
-
-    def start_broadcast_task(self) -> None:
-        """Start the broadcast queue checking task."""
-        if not self.check_broadcast_queue.is_running():
-            self.check_broadcast_queue.start()
-
-    @tasks.loop(seconds=2)
-    async def check_broadcast_queue(self) -> None:
-        """Send queued manual broadcast messages to the configured Discord channel."""
-        if BROADCAST_CHANNEL_ID <= 0:
+        bind_database(self.db)
+        if SQLAlchemyJobStore is None:
+            self.available = False
+            self.unavailable_reason = "SQLAlchemy is required to store schedules."
             return
-
-        broadcast = await self.bot.db_manager.get_next_broadcast()
-        if not broadcast:
+        if os.path.abspath(self.scheduler_db_path) == os.path.abspath(self.legacy_scheduler_db_path):
+            self.available = False
+            self.legacy_jobs_pending = True
+            self.unavailable_reason = "Refusing to start the scheduler from the legacy job store."
             return
-
-        message_id, content, channel_id = broadcast
-        if not content:
-            await self.bot.db_manager.delete_broadcast(message_id)
+        if legacy_markers_present(self.scheduler_db_path):
+            self.available = False
+            self.legacy_jobs_pending = True
+            self.unavailable_reason = "This job store still contains legacy callable references."
             return
+        import tools.morning_brief  # noqa: F401  registers the schedulable local briefing
 
-        target_channel_id = channel_id if channel_id is not None else BROADCAST_CHANNEL_ID
-        channel = self.bot.get_channel(target_channel_id)
-        if channel is None:
-            try:
-                channel = await asyncio.wait_for(
-                    self.bot.fetch_channel(target_channel_id),
-                    timeout=5.0,
-                )
-            except asyncio.TimeoutError:
-                self._logger.warning(
-                    "Timed out fetching broadcast channel %s",
-                    target_channel_id,
-                )
-                return
-            except (discord.NotFound, discord.Forbidden):
-                self._logger.error(
-                    "Broadcast channel %s is unavailable; dropping queued message id=%s",
-                    target_channel_id,
-                    message_id,
-                )
-                await self.bot.db_manager.delete_broadcast(message_id)
-            except Exception:
-                self._logger.exception("Failed to fetch broadcast channel %s", target_channel_id)
-                return
+        jobstores = {"default": SQLAlchemyJobStore(url=job_store_url(self.scheduler_db_path))}
+        self.scheduler = AsyncIOScheduler(
+            jobstores=jobstores,
+            job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600},
+        )
+        self.scheduler.start()
+        self.available = True
+        self.unavailable_reason = ""
 
+    def shutdown(self) -> None:
+        if self.scheduler is not None and self.scheduler.running:
+            self.scheduler.shutdown(wait=False)
+        self.scheduler = None
+        self.available = False
+
+    def _require(self) -> AsyncIOScheduler:
+        if not self.available or self.scheduler is None:
+            raise SchedulerUnavailable(self.unavailable_reason or "Scheduler is unavailable.")
+        return self.scheduler
+
+    async def add_daily_job(
+        self,
+        *,
+        name: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+        time_of_day: str,
+        timezone: str | None = None,
+    ) -> dict[str, Any]:
+        scheduler = self._require()
         try:
-            sendable_channel = cast(Any, channel)
-            chunks = split_broadcast_chunks(content)
-            for chunk in chunks:
-                await sendable_channel.send(chunk)
-        except Exception:
-            self._logger.exception("Failed to send broadcast message id=%s to channel %s", message_id, target_channel_id)
-            # Drop the failed item so one bad payload does not permanently block the queue.
-            await self.bot.db_manager.delete_broadcast(message_id)
-            return
-
-        await self.bot.db_manager.delete_broadcast(message_id)
-
-    @check_broadcast_queue.before_loop
-    async def before_check_broadcast_queue(self) -> None:
-        """Wait for bot readiness before polling broadcast queue."""
-        await self.bot.wait_until_ready()
-
-    async def get_active_jobs(self) -> list[dict[str, Any]]:
-        """Return a list of active jobs with their ID, next run time, and name."""
-        jobs_info = []
+            assert_schedulable(tool_name)
+        except ToolRejected as exc:
+            raise SchedulerUnavailable(exc.message) from exc
+        hour, minute = _parse_hhmm(time_of_day)
+        zone_name = timezone or AUTOMATION_TIMEZONE
         try:
-            jobs = list(self.scheduler.get_jobs())
-        except Exception:
-            return jobs_info
+            zone = ZoneInfo(zone_name)
+        except ZoneInfoNotFoundError as exc:
+            raise SchedulerUnavailable("Unknown timezone.") from exc
+        arguments = dict(arguments or {})
+        job = scheduler.add_job(
+            run_scheduled_job,
+            CronTrigger(hour=hour, minute=minute, timezone=zone),
+            args=[tool_name, arguments],
+            kwargs={},
+            id=f"daily_{tool_name}_{hour:02d}{minute:02d}_{int(datetime.now().timestamp())}",
+            name=name.strip() or tool_name,
+            replace_existing=False,
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+        # The dispatcher reads the job id from the third positional slot when present.
+        job.modify(args=[tool_name, arguments, job.id])
+        return _job_record(job, arguments)
 
-        for job in jobs:
-            try:
-                jobs_info.append(
-                    {
-                        "id": getattr(job, "id", None),
-                        "name": getattr(job, "name", None),
-                        "next_run_time": getattr(job, "next_run_time", None),
-                    }
-                )
-            except Exception:
-                # Skip problematic job entries but continue
-                continue
+    def list_jobs(self) -> list[dict[str, Any]]:
+        if not self.available or self.scheduler is None:
+            return []
+        records = []
+        for job in self.scheduler.get_jobs():
+            arguments = {}
+            args = list(getattr(job, "args", []) or [])
+            if len(args) >= 2 and isinstance(args[1], dict):
+                arguments = args[1]
+            records.append(_job_record(job, arguments))
+        return records
 
-        return jobs_info
+    def pause_job(self, job_id: str) -> dict[str, Any]:
+        scheduler = self._require()
+        scheduler.pause_job(job_id)
+        return self.get_job(job_id)
+
+    def resume_job(self, job_id: str) -> dict[str, Any]:
+        scheduler = self._require()
+        scheduler.resume_job(job_id)
+        return self.get_job(job_id)
+
+    def remove_job(self, job_id: str) -> None:
+        scheduler = self._require()
+        scheduler.remove_job(job_id)
+
+    def get_job(self, job_id: str) -> dict[str, Any]:
+        scheduler = self._require()
+        job = scheduler.get_job(job_id)
+        if job is None:
+            raise SchedulerUnavailable("Job not found.")
+        args = list(job.args or [])
+        arguments = args[1] if len(args) >= 2 and isinstance(args[1], dict) else {}
+        return _job_record(job, arguments)
+
+    async def run_job_now(self, job_id: str) -> dict[str, Any]:
+        job = self.get_job(job_id)
+        run_id = await run_scheduled_job(job["tool_name"], job["arguments"], job_id)
+        stored = await self.db.get_run(run_id)
+        if stored is None:
+            raise SchedulerUnavailable("Run was not stored.")
+        return stored
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    text = str(value or "").strip()
+    parts = text.split(":")
+    if len(parts) != 2:
+        raise SchedulerUnavailable("Schedule time must be HH:MM.")
+    try:
+        hour = int(parts[0])
+        minute = int(parts[1])
+    except ValueError as exc:
+        raise SchedulerUnavailable("Schedule time must be HH:MM.") from exc
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise SchedulerUnavailable("Schedule time must be HH:MM.")
+    return hour, minute
+
+
+def _job_record(job: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+    next_run = getattr(job, "next_run_time", None)
+    trigger = getattr(job, "trigger", None)
+    schedule = {"type": "daily", "time": _trigger_time(trigger), "timezone": _trigger_zone(trigger)}
+    args = list(getattr(job, "args", []) or [])
+    tool_name = str(args[0]) if args else ""
+    return {
+        "id": job.id,
+        "name": getattr(job, "name", None) or job.id,
+        "tool_name": tool_name,
+        "arguments": arguments,
+        "schedule": schedule,
+        "paused": next_run is None,
+        "next_run_at": next_run.isoformat() if next_run is not None else None,
+    }
+
+
+def _trigger_time(trigger: Any) -> str:
+    if trigger is None:
+        return ""
+    fields = getattr(trigger, "fields", None)
+    if not fields:
+        return ""
+    hour = minute = None
+    for field in fields:
+        if field.name == "hour":
+            hour = str(field)
+        elif field.name == "minute":
+            minute = str(field)
+    if hour is None or minute is None or not hour.isdigit() or not minute.isdigit():
+        return ""
+    return f"{int(hour):02d}:{int(minute):02d}"
+
+
+def _trigger_zone(trigger: Any) -> str:
+    timezone = getattr(trigger, "timezone", None)
+    if timezone is None:
+        return AUTOMATION_TIMEZONE
+    return getattr(timezone, "key", None) or str(timezone)

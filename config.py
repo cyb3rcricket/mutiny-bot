@@ -38,7 +38,8 @@ DEFAULT_SYSTEM_PROMPT = (
 DEFAULT_MODEL = "gemma4:e4b"
 
 DB_PATH = os.getenv("MUTINY_DB_PATH", "mutiny.db")
-SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "mutiny_scheduler.db")
+SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "mutiny_console_scheduler.db")
+LEGACY_SCHEDULER_DB_PATH = os.getenv("LEGACY_SCHEDULER_DB_PATH", "mutiny_scheduler.db")
 PALACE_PATH = os.path.expanduser(os.getenv("MUTINY_PALACE_PATH", "~/.mutiny/palace"))
 BIND_HOST = os.getenv("MUTINY_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = int(os.getenv("MUTINY_PORT", "8765"))

@@ -21,6 +21,37 @@ TOOL_RESULT_TRUNCATION_SUFFIX = " [truncated]"
 logger = logging.getLogger("mutiny_bot.llm")
 
 
+class LLMError(Exception):
+    """Structured inference failure. The message is safe to show in the UI."""
+
+    def __init__(self, code: str, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+
+
+def _local_model_id(model: str) -> str:
+    from config import ollama_endpoint_error
+    from llm.models import is_eligible_local_model
+
+    name = str(model or "").strip()
+    if name.startswith("ollama/"):
+        name = name[len("ollama/") :]
+    if not is_eligible_local_model(name):
+        raise LLMError("model_not_local", "Only a local Ollama model can be used.", retryable=False)
+    return f"ollama/{name}"
+
+
+def _allowed_tool_names(tools: Optional[list[dict[str, Any]]]) -> set[str]:
+    names: set[str] = set()
+    for schema in tools or []:
+        function = schema.get("function") if isinstance(schema, dict) else None
+        if isinstance(function, dict) and function.get("name"):
+            names.add(str(function["name"]))
+    return names
+
+
 class LLMHandler:
     """Handles LLM interactions with litellm and Ollama."""
 
@@ -41,9 +72,13 @@ class LLMHandler:
         return getattr(choices[0], "message", None)
 
     async def generate_response(self, model: str, messages: list[dict[str, Any]], tools: Optional[list[dict[str, Any]]] = None) -> str:
-        # Ensure model has provider prefix for litellm
-        if not model.startswith("ollama/"):
-            model = f"ollama/{model}"
+        from config import ollama_endpoint_error
+
+        endpoint_error = ollama_endpoint_error(self.api_base)
+        if endpoint_error:
+            raise LLMError("ollama_not_local", "Ollama must stay on a loopback address.", retryable=False)
+        model = _local_model_id(model)
+        allowed_tools = _allowed_tool_names(tools)
 
         # Use the system message already present in messages (set by the caller from the DB).
         # If none was provided, inject the default so there is always a system prompt.
@@ -66,13 +101,17 @@ class LLMHandler:
         # Call LiteLLM
         try:
             response = await litellm.acompletion(**completion_kwargs)
-        except Exception as e:
-            logger.error(f"LiteLLM error: {e}")
-            return "I encountered a core processor fault while generating a response (could not reach the local ai model)."
+        except Exception as exc:
+            logger.error("LiteLLM completion failed: %s", exc.__class__.__name__)
+            raise LLMError(
+                "model_unavailable",
+                "The local model could not be reached.",
+                retryable=True,
+            ) from exc
 
         ai_message = self._extract_first_message(response)
         if ai_message is None:
-            return "I could not generate a response right now."
+            raise LLMError("empty_response", "The local model returned no response.", retryable=True)
 
         # NUCLEAR SANITIZER – kill any tool call leakage
         if getattr(ai_message, "tool_calls", None):
@@ -85,10 +124,13 @@ class LLMHandler:
                 tool_name = getattr(function_data, "name", "")
                 raw_arguments = getattr(function_data, "arguments", "{}") or "{}"
 
-                try:
-                    tool_result = await self.execute_tool(tool_name, raw_arguments)
-                except asyncio.TimeoutError:
-                    tool_result = f"Tool '{tool_name}' timed out."
+                if tool_name not in allowed_tools:
+                    tool_result = f"Tool '{tool_name}' is not allowed."
+                else:
+                    try:
+                        tool_result = await self.execute_tool(tool_name, raw_arguments)
+                    except asyncio.TimeoutError:
+                        tool_result = f"Tool '{tool_name}' timed out."
 
                 tool_result_str = str(tool_result)
                 if len(tool_result_str) > MAX_TOOL_RESULT_CHARS:
@@ -134,21 +176,18 @@ class LLMHandler:
                     max_tokens=800,
                     timeout=45.0,
                 )
-            except Exception as e:
-                logger.error(f"LiteLLM error on tool response handling: {e}")
-                return "I encountered a core processor fault while generating the final response."
+            except Exception as exc:
+                logger.error("LiteLLM tool follow-up failed: %s", exc.__class__.__name__)
+                raise LLMError(
+                    "model_unavailable",
+                    "The local model could not be reached.",
+                    retryable=True,
+                ) from exc
             
             final_msg = self._extract_first_message(final_response)
             clean_text = (getattr(final_msg, "content", "") or "").strip()
         else:
             clean_text = (getattr(ai_message, "content", "") or "").strip()
-
-        # FINAL SAFETY NET – strip any remaining JSON garbage
-        import re
-        clean_text = re.sub(r'```json\s*\{.*?\}\s*```', '', clean_text, flags=re.DOTALL).strip()
-        
-        if clean_text.startswith("{") and clean_text.endswith("}"):
-            clean_text = "Sorry, internal error. Let me answer normally: I encountered a json leak and purged it."
 
         return clean_text
 
@@ -220,8 +259,8 @@ class LLMHandler:
                 max_tokens=150,
                 timeout=15.0,
             )
-        except Exception:
-            logger.exception("History summarization completion failed")
+        except Exception as exc:
+            logger.error("History summarization failed: %s", exc.__class__.__name__)
             return ""
         ai_message = self._extract_first_message(response)
         if ai_message is None:

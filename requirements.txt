@@ -1,8 +1,8 @@
-discord.py==2.7.1
 aiosqlite==0.22.1
 python-dotenv==1.2.1
 apscheduler==3.11.2
 litellm==1.82.6
 SQLAlchemy==2.0.49
-mempalace==3.0.0
-feedparser==6.0.12
+fastapi==0.141.1
+uvicorn==0.53.0
+pydantic==2.13.5
