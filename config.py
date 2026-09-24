@@ -49,9 +49,7 @@ OUTBOUND_ENABLED = os.getenv("MUTINY_OUTBOUND_ENABLED", "0").strip().lower() in 
 MAX_HISTORY_MESSAGES = 12
 MAX_INPUT_CHARS = 32_000
 
-# Transitional messenger settings. The Discord process still reads these until
-# cutover. They are plain values, not a Discord client.
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+# Read by the dormant news helper only. The console never starts that helper.
 _raw_broadcast = os.getenv("BROADCAST_CHANNEL_ID", "")
 try:
     if isinstance(_raw_broadcast, str) and _raw_broadcast.strip().lower() in ("", "none", "null"):
@@ -60,18 +58,6 @@ try:
         BROADCAST_CHANNEL_ID = int(_raw_broadcast)
 except (TypeError, ValueError):
     BROADCAST_CHANNEL_ID = 0
-BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "0") or "0")
-MONITORING_CHANNEL_ID = None
-LOG_PATHS = {
-    "syslog": "/var/log/syslog",
-    "auth": "/var/log/auth.log",
-    "kern": "/var/log/kern.log",
-    "docker": "/var/log/docker.log",
-    "nginx": "/var/log/nginx/access.log",
-    "apache": "/var/log/apache2/access.log",
-    "mysql": "/var/log/mysql/error.log",
-    "postgresql": "/var/log/postgresql/postgresql.log",
-}
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -97,30 +83,13 @@ def bind_host_error(host: str = BIND_HOST) -> str | None:
 
 
 def validate_startup_config() -> tuple[list[str], list[str]]:
-    """Validate transitional process startup. Returns (errors, warnings)."""
+    """Return loopback and Ollama problems. There is no messenger credential."""
     errors: list[str] = []
     warnings: list[str] = []
-
-    if not TOKEN or not str(TOKEN).strip():
-        errors.append("DISCORD_BOT_TOKEN is missing or empty.")
-
-    raw_broadcast = str(_raw_broadcast or "").strip()
-    if raw_broadcast and raw_broadcast.lower() not in {"none", "null"}:
-        try:
-            int(raw_broadcast)
-        except (TypeError, ValueError):
-            warnings.append(
-                "BROADCAST_CHANNEL_ID is not numeric; falling back to 0 (broadcasts disabled)."
-            )
-
-    if BOT_OWNER_ID == 0:
-        warnings.append(
-            "BOT_OWNER_ID is not configured (still 0). "
-            "All owner-only commands will be inaccessible until BOT_OWNER_ID is set to your Discord user ID."
-        )
-
+    host_error = bind_host_error()
+    if host_error:
+        errors.append(host_error)
     ollama_error = ollama_endpoint_error()
     if ollama_error:
-        warnings.append(ollama_error)
-
+        errors.append(ollama_error)
     return errors, warnings

@@ -1,179 +1,80 @@
-# **MUTINY BOT**
+# Mutiny
 
-You are not here to rent intelligence from somebody else's server farm.
-You are here to take it back.
+Mutiny is a single-user console for local Ollama chat, saved notes, and scheduled local tools. It listens on `127.0.0.1` only. Discord is not part of this program.
 
-Mutiny Bot is a Discord operations bot built for control, speed, and local-first execution. Discord handles conversation transport, while AI model inference, memory, and configuration stay in your own stack.
+## Run
 
-No cloud dependency for inference. No mystery pipeline. No black box decisions about your data. You run it. You own it. You ship it.
-
-## Key Features
-
-- **Local Ollama models only** for AI inference. No remote LLM provider required.
-- **Dynamic model detection** via installed Ollama models, with canonical support for `gemma4:e4b`, `phi4-mini:latest`, and `qwen2.5-coder:7b`.
-- **Local AI inference and memory**: model inference and memory processing happen on your machine. Messages pass through Discord for transport, but are never sent to a cloud LLM provider.
-- **SQLite-backed state** for chat history, bot configuration, and operational persistence.
-- **MemPalace-powered long-term memory** for deduplication and semantic recall (vector memory backed by ChromaDB under the hood).
-- **APScheduler + SQLAlchemy job persistence** for durable, recurring automations.
-- **RSS news monitoring pipeline** with AI summarization and memory-based deduplication.
-- **Broadcast queue system** to safely push scheduled outputs into Discord channels.
-- **System operations command surface** for logs, Docker visibility, host checks, and health insight.
-- **AI utility workflows** for script generation, error explanation, brainstorming, and structured tooling.
-- **Local AI runtime footprint** for model work and memory storage, designed for teams that do not want to hand their internal context to remote LLM providers.
-
-## Quick Start / Installation
-
-### Requirements
-
-- Python 3.9+
-- A Discord bot token
-- A running local Ollama daemon
-- Recommended local models:
-  - `gemma4:e4b`
-  - `phi4-mini:latest`
-  - `qwen2.5-coder:7b`
-
-### Install
-
-1. Create and activate a virtual environment.
+Python 3.11 or newer, plus a local Ollama daemon.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-```
-
-2. Install dependencies.
-
-```bash
-pip install -r requirements.txt
-```
-
-3. Create `.env` in the project root.
-
-```env
-DISCORD_BOT_TOKEN=your_discord_bot_token
-BROADCAST_CHANNEL_ID=0
-OLLAMA_API_BASE=http://127.0.0.1:11434
-SCHEDULER_DB_PATH=mutiny_scheduler.db
-```
-
-`BROADCAST_CHANNEL_ID` is optional unless you want scheduled outputs posted to a Discord channel.
-`SCHEDULER_DB_PATH` is optional and defaults to `mutiny_scheduler.db`.
-
-4. Pull the current canonical models.
-
-```bash
-ollama pull gemma4:e4b
-ollama pull phi4-mini:latest
-ollama pull qwen2.5-coder:7b
-```
-
-5. Run the bot.
-
-```bash
-source .venv/bin/activate
+python -m pip install -r requirements.txt
 python mutiny_bot.py
 ```
 
-On first launch, Mutiny Bot initializes local databases, loads tools, syncs slash commands, and starts scheduler services.
+Open `http://127.0.0.1:8765`. The page keeps its own conversation history in SQLite. A refresh shows the same threads.
 
-### Run Tests
+Optional memory indexing:
 
 ```bash
-source .venv/bin/activate
-python -m unittest discover -s tests -v
+python -m pip install -r requirements-memory.txt
 ```
 
-## How To Use The Main Commands
+MemPalace is used only when its embedding files are already on disk. Otherwise recall uses the SQLite facts. The console does not download those files.
 
-All slash commands require **Manage Server** permission unless noted otherwise. A global cooldown of 3 seconds is enforced.
+Copy `.env.example` to `.env` to change the port, database path, timezone, or Ollama URL. The Ollama URL must be a loopback address. `MUTINY_BIND_HOST` must stay on loopback; there is no LAN bind.
 
-### Core Automation
+## Privacy
 
-| Command | What it does | Example |
-|---|---|---|
-| `/schedule <task> <time>` | Schedule a recurring task | `/schedule "daily backup" "daily at 02:00"` |
-| `/jobs` | List active scheduled jobs | `/jobs` |
-| `/snooze-job <job-id> <hours>` | Pause a scheduled job temporarily | `/snooze-job 123 24` |
-| `/quick-run <tool-name>` | Execute a tool immediately (owner only) | `/quick-run get_morning_briefing` |
+- The process binds to `127.0.0.1` (or another loopback address you set).
+- Inference goes to the configured loopback Ollama endpoint. Cloud model names and non-loopback endpoints are rejected.
+- Set `OLLAMA_NO_CLOUD=1` on the Ollama daemon before starting it. Setting that variable in the console process does not reconfigure a daemon that is already running.
+- Ordinary chat does not call tools and does not browse the web.
+- Outbound news is off. `requirements-news.txt` is not installed by the steps above, and the console does not schedule the news monitor.
+- The browser session is an HttpOnly cookie for this process. It is not an account.
+- Mutations require the page's own Origin and the `X-Mutiny-Request` header. API docs are disabled so the page does not load a documentation CDN.
 
-### News Monitoring
+## What you can do
 
-| Command | What it does | Example |
-|---|---|---|
-| `/add_news_monitor <channel> <name> <search_query> [frequency] [time]` | Create a scheduled RSS news monitor | `/add_news_monitor #news ai-news "artificial intelligence" daily 08:00` |
-| `/list_news_monitors` | List active news monitors | `/list_news_monitors` |
-| `/remove_news_monitor <name>` | Remove a news monitor | `/remove_news_monitor ai-news` |
-| `/run_news_monitor <name>` | Trigger a news monitor immediately | `/run_news_monitor ai-news` |
+- Chat in separate threads. History, the selected model, and the personality survive a restart.
+- Remember a fact, recall it, or ask a question over saved notes.
+- Run the local morning briefing, or schedule it daily. Pause, resume, and stop are in the Jobs drawer. Results stay in SQLite.
+- Clear a thread's messages without deleting saved facts, or reset context while leaving the transcript visible.
 
-### System + Memory + AI Operations
+If Ollama has no installed models, the model picker says so. It does not invent one.
 
-| Command | What it does | Example |
-|---|---|---|
-| `/system` | Show host system health | `/system` |
-| `/docker` | List running Docker containers | `/docker` |
-| `/logs <service>` | Show recent service logs | `/logs syslog` |
-| `/ping <host>` | Run connectivity/latency check | `/ping google.com` |
-| `/remember <fact>` | Persist a fact to memory | `/remember "Server backup runs at 2 AM daily"` |
-| `/recall` | Recall saved facts | `/recall` |
-| `/ask-notes <question>` | Ask AI over memory + chat context | `/ask-notes "What are our backup schedules?"` |
-| `/generate-script <task>` | Generate a bash script | `/generate-script "backup database to S3"` |
-| `/explain-error <error_message>` | Explain and debug an error | `/explain-error "ModuleNotFoundError: No module named requests"` |
-| `/brainstorm <idea>` | Generate practical ideas | `/brainstorm "new Discord bot features"` |
-| `/daily-insight` | Get a daily AI ops insight | `/daily-insight` |
-| `/clear-history` | Clear your chat history | `/clear-history` |
-| `/reset` | Reset your chat context | `/reset` |
+## Data already on disk
 
-### Model + Bot Control
+Starting the console migrates an existing `mutiny.db`. A backup is written beside it with a `.migration-bak` suffix before the schema change. Legacy chat rows become one imported thread per old user id. Facts keep their ids. Pending broadcast rows are copied into run history and are not delivered anywhere.
 
-| Command | What it does | Example |
-|---|---|---|
-| `/model <model_name>` | Set active model | `/model phi4-mini:latest` |
-| `/switch-model <model_name>` | Switch active model (autocomplete enabled) | `/switch-model phi4-mini:latest` |
-| `/personality <prompt_text>` | Set the system prompt | `/personality You are a practical IT assistant...` |
-| `/status` | Show model, installed models, personality snippet, DB size | `/status` |
-| `/botstatus` | Show uptime, active jobs, and history counts | `/botstatus` |
-| `/sync-commands` | Resync app commands (owner only) | `/sync-commands` |
-| `/post-commands [channel]` | Publish command reference (owner only) | `/post-commands #general` |
-| `/restart-bot` | Restart bot with confirmation (owner only) | `/restart-bot` |
-| `/list-tools` | List registered AI tools (owner only) | `/list-tools` |
-| `/help` | Show command help | `/help` |
+The old scheduler file (`mutiny_scheduler.db` by default) is not started. Jobs from that file can be inspected and, when they are the morning briefing, recreated in a paused state:
 
-### AI Tools (Function Calling)
+```bash
+python scripts/migrate_legacy_jobs.py mutiny_scheduler.db mutiny_console_scheduler.db
+```
 
-These tools can be invoked by the model or scheduled:
+Do not point that script at a file you did not create locally. News jobs are recorded as disabled. Other old payloads are reported and not recreated.
 
-- `get_morning_briefing` - Generate a local morning operations briefing
-- `schedule_daily_automation` - Schedule a tool at a daily time
-- `list_active_automations` - List active scheduled automations
-- `stop_automation` - Stop a scheduled automation by job ID
-- `execute_news_monitor` - Fetch, summarize, and broadcast monitored news
+Copying old rows into MemPalace is a separate explicit command. It is not part of startup. A second run skips rows already recorded in `memory_imports`:
 
-## Current Status
+```bash
+python -m scripts.migrate_old_memory_to_palace --db-path mutiny.db
+```
 
-Mutiny Bot is live with dynamic local model detection and currently running these installed Ollama models:
+## Tests
 
-- `gemma4:e4b`
-- `phi4-mini:latest`
-- `qwen2.5-coder:7b`
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q tests
+```
 
-Startup log confirms:
+The suite is meant to run without Discord and without reaching the public internet. Live Ollama and a provisioned MemPalace install are optional; this environment did not have a running Ollama daemon, so that smoke was not run.
 
-`Loaded 3 Ollama models: gemma4:e4b, phi4-mini:latest, qwen2.5-coder:7b`
+## Not in this version
 
-### Operational Notes
-
-- If `DISCORD_BOT_TOKEN` is missing or empty, startup validation will fail and the bot will not launch.
-- Conversation history and configuration are persisted locally in SQLite.
-- Discord handles conversation transport; model inference is local-only through Ollama via `litellm` using your configured `OLLAMA_API_BASE`.
-
-## Closing Statement
-
-Build tools that answer to you.
-Run models you can inspect.
-Keep your memory local.
-Automate the work that burns your time.
-
-This is not a demo of what might be possible someday.
-This is already yours.
-Take it further.
+- Discord, Telegram, or any other messenger.
+- Streaming replies. The console waits for the full answer, then stores it.
+- Outbound news. The old monitor module is still in the tree and is not scheduled or shown in the UI.
+- Shell, Docker, log browsing, ping, or process restart.
+- LAN or public binding.

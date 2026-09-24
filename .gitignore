@@ -2,6 +2,10 @@
 mutiny.db
 mutiny_scheduler.db
 mutiny_scheduler.db-journal
+mutiny_console_scheduler.db
+*.db-wal
+*.db-shm
+*.migration-bak
 
 # macOS
 .DS_Store

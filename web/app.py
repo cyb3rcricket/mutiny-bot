@@ -24,6 +24,7 @@ from database.db import DatabaseManager
 from llm.llm_handler import LLMHandler
 from memory.palace import PalaceAdapter
 from scheduler.scheduler_manager import SchedulerManager
+from tools import register_tools
 from web.routes.api import router
 from web.security import LocalSessionMiddleware, json_error, new_session_token
 
@@ -45,6 +46,7 @@ def create_app(
     async def lifespan(app: FastAPI):
         db = DatabaseManager(db_path)
         await db.setup_database()
+        register_tools()
         palace = PalaceAdapter(palace_path)
         model = llm if llm is not None else LLMHandler(ollama_api_base)
         scheduler = SchedulerManager(db, scheduler_db_path, legacy_scheduler_db_path)
