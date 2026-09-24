@@ -7,7 +7,120 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <main id="app">Mutiny</main>
+  <div class="shell" id="shell" data-view="chat">
+    <header class="topbar">
+      <p class="mark">Mutiny</p>
+      <nav class="nav" aria-label="Sections">
+        <button type="button" data-view="threads">Threads</button>
+        <button type="button" data-view="chat" aria-current="page">Chat</button>
+        <button type="button" data-view="settings">Settings</button>
+        <button type="button" data-view="memory">Memory</button>
+        <button type="button" data-view="jobs">Jobs</button>
+        <button type="button" data-view="privacy">Privacy</button>
+      </nav>
+    </header>
+
+    <aside class="sidebar" id="sidebar" aria-label="Conversations">
+      <div class="sidebar-head">
+        <h1>Conversations</h1>
+        <button type="button" id="new-thread">New</button>
+      </div>
+      <ul id="thread-list" class="thread-list"></ul>
+    </aside>
+
+    <main class="conversation" id="conversation">
+      <header class="conv-head">
+        <h2 id="thread-title">No conversation</h2>
+        <div class="thread-actions">
+          <button type="button" id="clear-history">Clear history</button>
+          <button type="button" id="reset-context">Reset context</button>
+        </div>
+      </header>
+      <p id="action-note" class="note" hidden></p>
+      <p id="banner" class="banner" role="status" hidden></p>
+      <div id="transcript" class="transcript" aria-live="polite"></div>
+      <section id="tool-result" class="tool-result" hidden>
+        <h3>Tool result</h3>
+        <p id="tool-result-meta" class="meta"></p>
+        <pre id="tool-result-body"></pre>
+        <div id="tool-result-sources" class="sources"></div>
+      </section>
+      <form id="composer" class="composer">
+        <label id="model-label" for="composer-input">Message</label>
+        <textarea id="composer-input" rows="3" maxlength="32000" placeholder="Write a message"></textarea>
+        <button type="submit" id="send">Send</button>
+      </form>
+    </main>
+
+    <aside class="drawer" id="drawer" aria-label="Details">
+      <section id="panel-settings" class="panel" hidden>
+        <h2>Model and personality</h2>
+        <form id="settings-form">
+          <label for="model-select">Installed model</label>
+          <select id="model-select"></select>
+          <p id="model-status" class="note"></p>
+          <label for="personality">Personality</label>
+          <textarea id="personality" rows="8" maxlength="10000"></textarea>
+          <label for="timezone">Timezone</label>
+          <input id="timezone" type="text" autocomplete="off" spellcheck="false">
+          <button type="submit">Save settings</button>
+        </form>
+      </section>
+
+      <section id="panel-memory" class="panel" hidden>
+        <h2>Memory</h2>
+        <form id="remember-form">
+          <label for="remember-text">Remember this</label>
+          <textarea id="remember-text" rows="4" maxlength="32000"></textarea>
+          <button type="submit">Remember</button>
+        </form>
+        <h3>Saved facts</h3>
+        <ul id="fact-list" class="fact-list"></ul>
+        <form id="recall-form">
+          <label for="recall-query">Recall</label>
+          <input id="recall-query" type="text" autocomplete="off">
+          <button type="submit">Recall</button>
+        </form>
+        <form id="ask-form">
+          <label for="ask-question">Ask notes</label>
+          <textarea id="ask-question" rows="3"></textarea>
+          <button type="submit">Ask</button>
+        </form>
+      </section>
+
+      <section id="panel-jobs" class="panel" hidden>
+        <h2>Jobs</h2>
+        <p id="jobs-status" class="note"></p>
+        <button type="button" id="run-briefing">Run briefing</button>
+        <form id="job-form">
+          <label for="job-name">Name</label>
+          <input id="job-name" type="text" maxlength="120" required>
+          <label for="job-time">Daily time</label>
+          <input id="job-time" type="time" value="07:15" required>
+          <label for="job-zone">Timezone</label>
+          <input id="job-zone" type="text" autocomplete="off" spellcheck="false" required>
+          <button type="submit">Schedule briefing</button>
+        </form>
+        <ul id="job-list" class="job-list"></ul>
+        <div id="job-runs"></div>
+      </section>
+
+      <section id="panel-privacy" class="panel" hidden>
+        <h2>Privacy</h2>
+        <dl id="privacy-list" class="privacy"></dl>
+      </section>
+    </aside>
+  </div>
+
+  <dialog id="source-dialog">
+    <form method="dialog">
+      <h3 id="source-title"></h3>
+      <p id="source-kind" class="meta"></p>
+      <p id="source-excerpt"></p>
+      <p id="source-link"></p>
+      <button value="close">Close</button>
+    </form>
+  </dialog>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -55,6 +55,16 @@ class LocalApiTests(unittest.TestCase):
         self.client.__exit__(None, None, None)
         self._tmp.cleanup()
 
+    def test_api_module_is_static_and_session_is_explicit(self) -> None:
+        fresh = TestClient(self.app, base_url="http://127.0.0.1:8765")
+        module = fresh.get("/api.js")
+        self.assertEqual(module.status_code, 200)
+        self.assertIn("function api", module.text)
+        self.assertNotIn("mutiny_session", module.headers.get("set-cookie", ""))
+        script = fresh.get("/app.js")
+        self.assertEqual(script.status_code, 200)
+        self.assertIn('api("/api/session")', script.text)
+
     def test_host_origin_and_session_guards(self) -> None:
         evil = TestClient(self.app, base_url="http://evil.example")
         denied = evil.get("/api/status")

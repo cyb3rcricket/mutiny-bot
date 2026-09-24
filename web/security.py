@@ -40,7 +40,8 @@ def host_is_allowed(host_header: str) -> bool:
 
 class LocalSessionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
-        if request.url.path.startswith("/api"):
+        # Require the slash so /api.js stays a static module, not an API route.
+        if request.url.path.startswith("/api/"):
             if not host_is_allowed(request.headers.get("host", "")):
                 return json_error(400, "invalid_host", "The console only accepts loopback hosts.")
             if request.method in {"POST", "PATCH", "DELETE"}:
