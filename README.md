@@ -55,7 +55,7 @@ Copy `.env.example` to `.env` to override the port, database path, automation ti
 ## What you can do
 
 - **Threaded chat**: Manage distinct conversation threads. Conversation history, the selected model, and the configured system personality survive process restarts.
-- **Persistent memory**: Save facts with `/remember`, review them with `/recall`, or query your saved knowledge with `/ask-notes`.
+- **Persistent memory**: In the Memory panel, save a fact, recall saved notes, or ask a question over what you have stored.
 - **Local automation**: Execute the local morning briefing on demand or schedule it daily. Manage recurring runs with pause, resume, and stop controls in the Jobs drawer. All run histories and outputs stay in SQLite.
 - **Context management**: Clear a thread's stored messages without affecting saved facts, or reset conversation context for the model while keeping the transcript visible on screen.
 - **Accurate status**: If Ollama has no installed local models, the model selector reports that state honestly instead of falling back to remote defaults or fictitious models.
