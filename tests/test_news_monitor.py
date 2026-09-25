@@ -5,28 +5,18 @@ import types
 import unittest
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
-# ---------------------------------------------------------------------------
-# Stub heavy optional dependencies before importing the module under test.
-# ---------------------------------------------------------------------------
+# Stub optional packages only. Never replace config, LiteLLM, or the real
+# scheduler module: an empty ModuleType here poisons later test collection.
 for _mod in (
     "feedparser",
-    "litellm",
-    "config",
     "mempalace",
     "mempalace.mcp_server",
     "mempalace.searcher",
-    "tools.scheduler_manager",
 ):
     sys.modules.setdefault(_mod, types.ModuleType(_mod))
 
-# Give config the attributes the module reads at import time.
-sys.modules["config"].DEFAULT_MODEL = "llama3"
-sys.modules["config"].OLLAMA_API_BASE = "http://localhost:11434"
-
-# Give stub modules the attributes that patch.object / the code accesses.
-sys.modules["feedparser"].parse = MagicMock()
-sys.modules["litellm"].acompletion = AsyncMock()
-sys.modules["tools.scheduler_manager"]._enqueue_broadcast = AsyncMock()
+if not hasattr(sys.modules["feedparser"], "parse"):
+    sys.modules["feedparser"].parse = MagicMock()
 
 import tools.news_monitor as news_monitor_mod  # noqa: E402
 

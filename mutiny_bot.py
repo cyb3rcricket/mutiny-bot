@@ -1,4 +1,4 @@
-"""MutinyBot launcher."""
+"""Mutiny local console launcher."""
 
 import logging
 import os
@@ -7,39 +7,37 @@ from pathlib import Path
 
 
 def _ensure_project_venv() -> None:
-    """Re-exec with the local project venv when available.
-
-    This prevents common startup failures where users run `python3 mutiny_bot.py`
-    outside `.venv` and miss required dependencies.
-    """
-    running_in_venv = sys.prefix != sys.base_prefix
-    if running_in_venv:
+    """Re-exec with the local project venv when one is present."""
+    if sys.prefix != sys.base_prefix:
         return
-
     project_root = Path(__file__).resolve().parent
     venv_python = project_root / ".venv" / "bin" / "python"
     if not venv_python.exists():
         return
-
     os.execv(str(venv_python), [str(venv_python), str(Path(__file__).resolve()), *sys.argv[1:]])
 
 
 _ensure_project_venv()
 
 _KNOWN_RUNTIME_DEPENDENCIES = {
-    "discord",
+    "fastapi",
+    "uvicorn",
     "aiosqlite",
     "dotenv",
     "apscheduler",
     "litellm",
     "sqlalchemy",
+    "pydantic",
 }
 
+from core.privacy import bootstrap
+
+bootstrap()
+
 try:
-    from bot.bot import MutinyBot
-    from bot.capabilities import get_capabilities_response  # noqa: F401
-    from config import TOKEN, intents, validate_startup_config
-    import tools.task_prioritizer  # noqa: F401
+    import uvicorn
+    from config import BIND_HOST, PORT, bind_host_error, ollama_endpoint_error
+    from web.app import create_app
 except ModuleNotFoundError as dependency_error:
     missing_name = str(getattr(dependency_error, "name", "") or "")
     if missing_name in _KNOWN_RUNTIME_DEPENDENCIES:
@@ -50,21 +48,20 @@ except ModuleNotFoundError as dependency_error:
     raise
 
 
-
-# Basic logging configuration for the entire application.
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mutiny_bot")
 
-config_errors, config_warnings = validate_startup_config()
-for warning in config_warnings:
-    logger.warning(warning)
 
-if config_errors:
-    formatted_errors = "\n".join(f"- {error}" for error in config_errors)
-    raise ValueError(f"Invalid startup configuration:\n{formatted_errors}")
+def main() -> None:
+    host_error = bind_host_error()
+    if host_error:
+        raise SystemExit(host_error)
+    endpoint_error = ollama_endpoint_error()
+    if endpoint_error:
+        raise SystemExit(endpoint_error)
+    logger.info("Mutiny console on http://%s:%s", BIND_HOST, PORT)
+    uvicorn.run(create_app(), host=BIND_HOST, port=PORT, log_level="info")
 
 
 if __name__ == "__main__":
-    # Create and run the bot.
-    bot = MutinyBot(command_prefix="!", intents=intents)
-    bot.run(str(TOKEN))
+    main()

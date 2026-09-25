@@ -1,0 +1,1 @@
+"""Discord-free application services."""

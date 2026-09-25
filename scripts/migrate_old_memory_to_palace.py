@@ -133,6 +133,48 @@ def _store_drawer(palace_path: str, wing: str, room: str, content: str, metadata
         raise RuntimeError(result.get("error") or "Failed to add drawer")
 
 
+def _provenance_user(row: sqlite3.Row) -> Any:
+    if "user_id" in row.keys():
+        return row["user_id"]
+    if "legacy_user_id" in row.keys():
+        return row["legacy_user_id"]
+    return None
+
+
+def _source_key(table: str, row: sqlite3.Row, content: str) -> str:
+    if "id" in row.keys() and row["id"] is not None:
+        return f"{table}:{row['id']}"
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return f"{table}:hash:{digest}"
+
+
+def _import_done(conn: sqlite3.Connection, source_key: str) -> bool:
+    if "memory_imports" not in set(_table_names(conn)):
+        return False
+    found = conn.execute(
+        "SELECT status FROM memory_imports WHERE source_key = ?",
+        (source_key,),
+    ).fetchone()
+    return bool(found and found[0] == "imported")
+
+
+def _mark_import(conn: sqlite3.Connection, source_key: str, reference: str) -> None:
+    if "memory_imports" not in set(_table_names(conn)):
+        return
+    conn.execute(
+        """
+        INSERT INTO memory_imports (source_key, palace_reference, status, updated_at)
+        VALUES (?, ?, 'imported', ?)
+        ON CONFLICT(source_key) DO UPDATE SET
+            palace_reference = excluded.palace_reference,
+            status = excluded.status,
+            updated_at = excluded.updated_at
+        """,
+        (source_key, reference, datetime.utcnow().isoformat(timespec="seconds")),
+    )
+    conn.commit()
+
+
 def _migrate_chat_history(conn: sqlite3.Connection, palace_path: str, graph: Any, dry_run: bool = False) -> int:
     tables = set(_table_names(conn))
     if "chat_history" not in tables:
@@ -140,7 +182,18 @@ def _migrate_chat_history(conn: sqlite3.Connection, palace_path: str, graph: Any
 
     columns = _table_columns(conn, "chat_history")
     select_cols = ["content"]
-    optional_cols = ["role", "user_id", "timestamp", "guild", "guild_name", "channel", "channel_name"]
+    optional_cols = [
+        "id",
+        "role",
+        "user_id",
+        "legacy_user_id",
+        "thread_id",
+        "timestamp",
+        "guild",
+        "guild_name",
+        "channel",
+        "channel_name",
+    ]
     for col in optional_cols:
         if col in columns:
             select_cols.append(col)
@@ -152,6 +205,9 @@ def _migrate_chat_history(conn: sqlite3.Connection, palace_path: str, graph: Any
     for row in rows:
         content = str(row["content"] or "").strip()
         if not content:
+            continue
+        source_key = _source_key("chat_history", row, content)
+        if _import_done(conn, source_key):
             continue
 
         guild_value = row["guild"] if "guild" in row.keys() else row["guild_name"] if "guild_name" in row.keys() else None
@@ -165,7 +221,7 @@ def _migrate_chat_history(conn: sqlite3.Connection, palace_path: str, graph: Any
             "source": "sqlite-v1",
             "table": "chat_history",
             "role": row["role"] if "role" in row.keys() else "unknown",
-            "user_id": row["user_id"] if "user_id" in row.keys() else None,
+            "user_id": _provenance_user(row),
             "timestamp": row["timestamp"] if "timestamp" in row.keys() else None,
             "guild": wing,
             "channel": room,
@@ -179,6 +235,7 @@ def _migrate_chat_history(conn: sqlite3.Connection, palace_path: str, graph: Any
                 content=content,
                 metadata=metadata,
             )
+            _mark_import(conn, source_key, f"{wing}/{room}")
         migrated += 1
 
     return migrated
@@ -212,7 +269,17 @@ def _migrate_notes(conn: sqlite3.Connection, palace_path: str, graph: Any, dry_r
             continue
 
         select_cols = [content_col]
-        for optional in ("created_at", "timestamp", "user_id", "guild", "guild_name", "channel", "channel_name"):
+        for optional in (
+            "id",
+            "created_at",
+            "timestamp",
+            "user_id",
+            "legacy_user_id",
+            "guild",
+            "guild_name",
+            "channel",
+            "channel_name",
+        ):
             if optional in columns:
                 select_cols.append(optional)
 
@@ -222,6 +289,9 @@ def _migrate_notes(conn: sqlite3.Connection, palace_path: str, graph: Any, dry_r
         for row in rows:
             content = str(row[content_col] or "").strip()
             if not content:
+                continue
+            source_key = _source_key(table_name, row, content)
+            if _import_done(conn, source_key):
                 continue
 
             guild_value = row["guild"] if "guild" in row.keys() else row["guild_name"] if "guild_name" in row.keys() else None
@@ -235,7 +305,7 @@ def _migrate_notes(conn: sqlite3.Connection, palace_path: str, graph: Any, dry_r
                 "source": "sqlite-v1",
                 "table": table_name,
                 "type": "note",
-                "user_id": row["user_id"] if "user_id" in row.keys() else None,
+                "user_id": _provenance_user(row),
                 "timestamp": row["created_at"] if "created_at" in row.keys() else row["timestamp"] if "timestamp" in row.keys() else None,
                 "guild": wing,
                 "channel": room,
@@ -249,6 +319,7 @@ def _migrate_notes(conn: sqlite3.Connection, palace_path: str, graph: Any, dry_r
                     content=content,
                     metadata=metadata,
                 )
+                _mark_import(conn, source_key, f"{wing}/{room}")
             migrated += 1
 
     return migrated

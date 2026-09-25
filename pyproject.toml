@@ -1,0 +1,11 @@
+[project]
+name = "mutiny-bot"
+version = "0.0.0"
+description = "Single-user localhost console for local Ollama inference."
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+norecursedirs = [".venv", "scripts", "build", "dist"]

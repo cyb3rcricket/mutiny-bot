@@ -1,0 +1,5 @@
+# Development and test dependencies resolved on Python 3.11.16.
+# httpx is also pulled transitively by LiteLLM; pin it here so the test
+# suite does not depend on that accident.
+pytest==9.1.1
+httpx==0.28.1

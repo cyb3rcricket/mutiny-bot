@@ -5,7 +5,7 @@ import platform
 import shutil
 from datetime import datetime
 
-from tools.registry import ai_tool
+from tools.registry import ToolPolicy, ai_tool
 
 
 def collect_local_system_snapshot() -> str:
@@ -49,6 +49,7 @@ def collect_local_system_snapshot() -> str:
         "properties": {},
         "required": [],
     },
+    policy=ToolPolicy(manual=True, schedulable=True),
 )
 async def get_morning_briefing() -> str:
     """Build and return a deterministic morning ops briefing."""
