@@ -11,6 +11,7 @@ from database.db import DatabaseManager
 from llm.llm_handler import LLMHandler
 from memory.palace import PalaceAdapter
 from memory.service import recall
+from tools.registry import ToolPolicy, register_ai_tool
 
 logger = logging.getLogger("mutiny_bot.research")
 
@@ -239,3 +240,22 @@ async def run_research(
         "mode": "closed",
         "question": question,
     }
+
+
+RESEARCH_TOOL_PARAMETERS = {
+    "type": "object",
+    "properties": {
+        "question": {"type": "string"},
+        "mode": {"type": "string", "default": "closed"},
+        "limit": {"type": "integer"},
+    },
+    "required": ["question"],
+}
+
+register_ai_tool(
+    name="research",
+    description="Execute closed-corpus research over local facts and memories",
+    parameters=RESEARCH_TOOL_PARAMETERS,
+    func=run_research,
+    policy=ToolPolicy(manual=True, network=False, schedulable=False),
+)

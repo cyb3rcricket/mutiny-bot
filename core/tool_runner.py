@@ -11,6 +11,7 @@ MANUAL_TOOL_NAMES = (
     "list_active_automations",
     "recall",
     "ask_notes",
+    "research",
 )
 SCHEDULABLE_TOOL_NAMES = ("get_morning_briefing",)
 
@@ -40,7 +41,7 @@ def manual_tool_schemas() -> list[dict[str, Any]]:
 def assert_manual_execution(name: str) -> None:
     if name not in MANUAL_TOOL_NAMES:
         raise ToolRejected("tool_not_allowed", "That tool is not available.")
-    if name in {"recall", "ask_notes"}:
+    if name in {"recall", "ask_notes", "research"}:
         return
     if name in AVAILABLE_TOOLS:
         policy = policy_for(name)

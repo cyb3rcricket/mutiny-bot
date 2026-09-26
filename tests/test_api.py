@@ -18,11 +18,17 @@ class FakeLLM:
     def __init__(self) -> None:
         self.calls = 0
         self.reply = ""
+        self.rewrite_reply = None
 
     async def generate_response(self, model, messages, tools=None):
         self.calls += 1
         if tools:
             raise AssertionError("ordinary chat must not be given tools")
+        system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+        if "search phrase" in system.lower():
+            if self.rewrite_reply is not None:
+                return self.rewrite_reply
+            return '["garage"]'
         if self.reply:
             return self.reply
         user = [item for item in messages if item["role"] == "user"][-1]["content"]
@@ -171,7 +177,7 @@ class LocalApiTests(unittest.TestCase):
         self.assertIn("Morning Briefing", briefing.json()["output"])
 
         names = {tool["name"] for tool in self.client.get("/api/tools").json()["tools"]}
-        self.assertEqual(names, {"get_morning_briefing", "list_active_automations", "recall", "ask_notes"})
+        self.assertEqual(names, {"get_morning_briefing", "list_active_automations", "recall", "ask_notes", "research"})
         for blocked in ("ping", "docker", "shell", "restart"):
             missing = self.client.post(
                 f"/api/tools/{blocked}/runs",
@@ -206,6 +212,127 @@ class LocalApiTests(unittest.TestCase):
         self.assertFalse(status.json()["dangerous_tools_enabled"])
         self.assertFalse(status.json()["outbound_enabled"])
         self.assertIn("127.0.0.1", status.json()["ollama_target"])
+
+    def test_research_tool_run_contract_and_refusals(self) -> None:
+        from core.tool_runner import SCHEDULABLE_TOOL_NAMES
+
+        # 1. Verify research is NOT in SCHEDULABLE_TOOL_NAMES
+        self.assertNotIn("research", SCHEDULABLE_TOOL_NAMES)
+
+        # 2. Scheduling research tool must fail
+        sched_attempt = self.client.post(
+            "/api/jobs",
+            headers=self.mutation,
+            json={
+                "name": "Scheduled Research",
+                "tool_name": "research",
+                "arguments": {"question": "What is Mutiny?"},
+                "schedule": {"type": "daily", "time": "08:00", "timezone": "UTC"},
+            },
+        )
+        self.assertEqual(sched_attempt.status_code, 422)
+
+        # 3. GET /api/tools includes research with correct parameters and policy
+        tools_list = self.client.get("/api/tools").json()["tools"]
+        research_tool = next((t for t in tools_list if t["name"] == "research"), None)
+        self.assertIsNotNone(research_tool)
+        self.assertFalse(research_tool["network"])
+        self.assertFalse(research_tool["schedulable"])
+        self.assertIn("question", research_tool["parameters"]["required"])
+
+        # 4. Save a fact to query
+        self.client.post(
+            "/api/memory/facts",
+            headers=self.mutation,
+            json={"request_id": "fact-res-1", "content": "Mutiny is a personal local AI console."},
+        )
+
+        # 5. Successful research run in closed mode
+        self.llm.rewrite_reply = '["personal local AI"]'
+        self.llm.reply = "According to retrieved notes, Mutiny is a personal local AI console."
+        res = self.client.post(
+            "/api/tools/research/runs",
+            headers=self.mutation,
+            json={
+                "request_id": "run-res-1",
+                "arguments": {"question": "What is Mutiny?", "mode": "closed"},
+            },
+        )
+        self.assertEqual(res.status_code, 200, res.text)
+        data = res.json()
+        self.assertEqual(data["tool_name"], "research")
+        self.assertEqual(data["status"], "complete")
+        self.assertEqual(data["output"], "According to retrieved notes, Mutiny is a personal local AI console.")
+        self.assertTrue(len(data["sources"]) > 0)
+        for src in data["sources"]:
+            self.assertEqual(src["run_id"], data["id"])
+            self.assertIsNone(src["external_url"])
+            self.assertIn(src["kind"], {"fact", "memory"})
+            self.assertTrue(src["excerpt"])
+
+        # Verify arguments_json contract: {question, mode, queries, gaps, model, writer} without essay
+        args = data["arguments"]
+        self.assertEqual(args["question"], "What is Mutiny?")
+        self.assertEqual(args["mode"], "closed")
+        self.assertEqual(args["writer"], "local")
+        self.assertIsInstance(args["queries"], list)
+        self.assertIsInstance(args["gaps"], list)
+        self.assertIn("model", args)
+        self.assertNotIn("answer", args)
+        self.assertNotIn(data["output"], str(args))
+
+        # Idempotency check: same request_id returns existing run
+        again = self.client.post(
+            "/api/tools/research/runs",
+            headers=self.mutation,
+            json={
+                "request_id": "run-res-1",
+                "arguments": {"question": "What is Mutiny?", "mode": "closed"},
+            },
+        )
+        self.assertEqual(again.status_code, 200)
+        self.assertEqual(again.json()["id"], data["id"])
+
+        # 6. mode="web" and mode="wiki" fail closed (status=failed, no sources, no egress)
+        web_res = self.client.post(
+            "/api/tools/research/runs",
+            headers=self.mutation,
+            json={
+                "request_id": "run-web-1",
+                "arguments": {"question": "What is Mutiny?", "mode": "web"},
+            },
+        )
+        self.assertEqual(web_res.status_code, 200, web_res.text)
+        web_data = web_res.json()
+        self.assertEqual(web_data["status"], "failed")
+        self.assertEqual(web_data["sources"], [])
+        self.assertIn("not implemented", web_data["output"].lower())
+
+        wiki_res = self.client.post(
+            "/api/tools/research/runs",
+            headers=self.mutation,
+            json={
+                "request_id": "run-wiki-1",
+                "arguments": {"question": "What is Mutiny?", "mode": "wiki"},
+            },
+        )
+        self.assertEqual(wiki_res.status_code, 200, wiki_res.text)
+        wiki_data = wiki_res.json()
+        self.assertEqual(wiki_data["status"], "failed")
+        self.assertEqual(wiki_data["sources"], [])
+        self.assertIn("not implemented", wiki_data["output"].lower())
+
+        # Missing question fails
+        empty_res = self.client.post(
+            "/api/tools/research/runs",
+            headers=self.mutation,
+            json={
+                "request_id": "run-empty-1",
+                "arguments": {"question": "   "},
+            },
+        )
+        self.assertEqual(empty_res.status_code, 200)
+        self.assertEqual(empty_res.json()["status"], "failed")
 
 
 class ChatConflictTests(unittest.IsolatedAsyncioTestCase):

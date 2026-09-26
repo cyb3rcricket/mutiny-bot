@@ -7,3 +7,4 @@ def register_tools() -> None:
     """Import modules whose decorators register the safe local tools."""
     import tools.morning_brief  # noqa: F401
     import tools.task_prioritizer  # noqa: F401
+    import core.research  # noqa: F401

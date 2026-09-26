@@ -645,15 +645,22 @@ class DatabaseManager:
         status: str,
         output: str | None = None,
         error_code: str | None = None,
+        arguments: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
+        args_clause = ""
+        params: list[Any] = [status, output, error_code, utc_now()]
+        if arguments is not None:
+            args_clause = ", arguments_json = ?"
+            params.append(json.dumps(arguments, sort_keys=True))
+        params.append(run_id)
         async with self.transaction() as db:
             await db.execute(
-                """
+                f"""
                 UPDATE runs
-                SET status = ?, output = ?, error_code = ?, finished_at = ?
+                SET status = ?, output = ?, error_code = ?, finished_at = ?{args_clause}
                 WHERE id = ?
                 """,
-                (status, output, error_code, utc_now(), run_id),
+                params,
             )
         return await self.get_run(run_id)
 
@@ -715,6 +722,8 @@ class DatabaseManager:
             )
         return {
             "id": source_id,
+            "message_id": message_id,
+            "run_id": run_id,
             "kind": kind,
             "title": title,
             "excerpt": excerpt,
@@ -798,6 +807,8 @@ def _run_record(row: aiosqlite.Row) -> dict[str, Any]:
 def _source_record(row: aiosqlite.Row) -> dict[str, Any]:
     return {
         "id": str(row["id"]),
+        "message_id": row["message_id"],
+        "run_id": row["run_id"],
         "kind": str(row["kind"]),
         "title": row["title"],
         "excerpt": row["excerpt"],

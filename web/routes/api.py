@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from config import BIND_HOST, OUTBOUND_ENABLED, PORT
 from core.chat import ChatConflict, ChatNotFound, send_message
+from core.research import run_research
 from core.tool_runner import MANUAL_TOOL_NAMES, ToolRejected, assert_manual_execution
 from database.db import InputTooLong
 from llm.llm_handler import LLMError
@@ -309,6 +310,22 @@ async def list_tools() -> dict[str, Any]:
             "schedulable": False,
             "mutation": False,
         },
+        {
+            "name": "research",
+            "description": "Execute closed-corpus research over local facts and memories",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                    "mode": {"type": "string", "default": "closed"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["question"],
+            },
+            "network": False,
+            "schedulable": False,
+            "mutation": False,
+        },
     ]
     return {"tools": [tool for tool in catalog if tool["name"] in MANUAL_TOOL_NAMES]}
 
@@ -332,7 +349,7 @@ async def run_tool(request: Request, name: str, body: ToolRunCreate) -> JSONResp
         status="running",
     )
     try:
-        output, sources, error_code = await _execute_manual(services, name, body.arguments)
+        output, sources, error_code, final_arguments = await _execute_manual(services, name, body.arguments)
     except InputTooLong as exc:
         await services.db.finish_run(run["id"], status="failed", error_code="input_too_long", output=str(exc))
         return json_error(422, "input_too_long", str(exc))
@@ -344,6 +361,7 @@ async def run_tool(request: Request, name: str, body: ToolRunCreate) -> JSONResp
         status="failed" if error_code else "complete",
         output=output,
         error_code=error_code,
+        arguments=final_arguments,
     )
     for source in sources:
         await services.db.add_source(run_id=run["id"], **source)
@@ -427,20 +445,20 @@ async def delete_job(request: Request, job_id: str) -> Response:
     return Response(status_code=204)
 
 
-async def _execute_manual(services: Any, name: str, arguments: dict[str, Any]) -> tuple[str, list[dict[str, Any]], str | None]:
+async def _execute_manual(services: Any, name: str, arguments: dict[str, Any]) -> tuple[str, list[dict[str, Any]], str | None, dict[str, Any] | None]:
     if name == "get_morning_briefing":
         if arguments:
-            return "This tool does not take arguments.", [], "invalid_arguments"
+            return "This tool does not take arguments.", [], "invalid_arguments", None
         import tools.morning_brief
 
         text = await tools.morning_brief.get_morning_briefing()
-        return str(text), [], None
+        return str(text), [], None, None
     if name == "list_active_automations":
         jobs = services.scheduler.list_jobs()
         if not jobs:
-            return "No active automations scheduled.", [], None
+            return "No active automations scheduled.", [], None, None
         lines = [f"{job['id']} next={job['next_run_at'] or 'paused'}" for job in jobs]
-        return "\n".join(lines), [], None
+        return "\n".join(lines), [], None, None
     if name == "recall":
         result = await recall(
             services.db,
@@ -448,11 +466,11 @@ async def _execute_manual(services: Any, name: str, arguments: dict[str, Any]) -
             query=str(arguments.get("query") or ""),
             limit=int(arguments.get("limit") or 20),
         )
-        return result["output"], result["sources"], None
+        return result["output"], result["sources"], None, None
     if name == "ask_notes":
         question = str(arguments.get("question") or "").strip()
         if not question:
-            return "A question is required.", [], "invalid_arguments"
+            return "A question is required.", [], "invalid_arguments", None
         result = await ask_notes(
             services.db,
             services.palace,
@@ -461,8 +479,44 @@ async def _execute_manual(services: Any, name: str, arguments: dict[str, Any]) -
             thread_id=arguments.get("thread_id"),
             limit=int(arguments.get("limit") or 8),
         )
-        return result["output"], result["sources"], None
-    return "That tool is not available.", [], "tool_not_allowed"
+        return result["output"], result["sources"], None, None
+    if name == "research":
+        question = str(arguments.get("question") or "").strip()
+        if not question:
+            return "A question is required.", [], "invalid_arguments", None
+        mode = str(arguments.get("mode") or "closed").strip()
+        if mode != "closed":
+            return (
+                f"Research mode '{mode}' is not implemented (wiki/web not implemented). Mutiny research currently supports 'closed' mode only.",
+                [],
+                "unsupported_mode",
+                None,
+            )
+        try:
+            limit = int(arguments.get("limit") or 8)
+        except (ValueError, TypeError):
+            limit = 8
+        try:
+            result = await run_research(
+                services.db,
+                services.palace,
+                services.llm,
+                question=question,
+                mode=mode,
+                limit=limit,
+            )
+        except ValueError as exc:
+            return str(exc), [], "unsupported_mode", None
+        arguments_payload = {
+            "question": result["question"],
+            "mode": result["mode"],
+            "queries": result["queries"],
+            "gaps": result["gaps"],
+            "model": result["model"],
+            "writer": result["writer"],
+        }
+        return result["answer"], result["sources"], None, arguments_payload
+    return "That tool is not available.", [], "tool_not_allowed", None
 
 
 def _safe_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
