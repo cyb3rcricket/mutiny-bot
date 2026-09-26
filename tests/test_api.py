@@ -1,13 +1,15 @@
 """Local API security, chat persistence, and explicit tools."""
 
 import os
+import sqlite3
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from starlette.testclient import TestClient
 
 from core.chat import ChatConflict, send_message
-from database.db import DatabaseManager
+from database.db import DatabaseManager, InputTooLong
 from llm.llm_handler import LLMError
 from web.app import create_app
 
@@ -40,9 +42,10 @@ class FakeLLM:
 class LocalApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
+        self._db_path = os.path.join(self._tmp.name, "app.db")
         self.llm = FakeLLM()
         self.app = create_app(
-            db_path=os.path.join(self._tmp.name, "app.db"),
+            db_path=self._db_path,
             scheduler_db_path=os.path.join(self._tmp.name, "sched.db"),
             legacy_scheduler_db_path=os.path.join(self._tmp.name, "legacy.db"),
             palace_path=os.path.join(self._tmp.name, "palace"),
@@ -334,6 +337,170 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(empty_res.status_code, 200)
         self.assertEqual(empty_res.json()["status"], "failed")
 
+    def _run_row(self, request_id: str) -> tuple[str, str | None, str | None]:
+        with sqlite3.connect(self._db_path) as connection:
+            row = connection.execute(
+                "SELECT status, error_code, output FROM runs WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        return row
+
+    def test_research_unexpected_failure_is_persisted_and_sanitized(self) -> None:
+        request_id = "run-unexpected-1"
+        with patch(
+            "web.routes.api.run_research",
+            new=AsyncMock(side_effect=RuntimeError("private traceback detail")),
+        ):
+            response = self.client.post(
+                "/api/tools/research/runs",
+                headers=self.mutation,
+                json={"request_id": request_id, "arguments": {"question": "What is Mutiny?"}},
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json()["error"]["code"], "research_failed")
+        self.assertNotIn("private traceback detail", response.text)
+        self.assertEqual(self._run_row(request_id), ("failed", "research_failed", "Research could not be completed."))
+
+    def test_research_known_failures_keep_structured_error_handlers(self) -> None:
+        cases = [
+            (InputTooLong("too long"), 422, "input_too_long"),
+            (LLMError("model_unavailable", "local model failed", retryable=True), 503, "model_unavailable"),
+        ]
+        for index, (failure, status, code) in enumerate(cases):
+            request_id = f"run-known-failure-{index}"
+            with patch("web.routes.api.run_research", new=AsyncMock(side_effect=failure)):
+                response = self.client.post(
+                    "/api/tools/research/runs",
+                    headers=self.mutation,
+                    json={"request_id": request_id, "arguments": {"question": "What is Mutiny?"}},
+                )
+            self.assertEqual(response.status_code, status)
+            self.assertEqual(response.json()["error"]["code"], code)
+            self.assertEqual(self._run_row(request_id)[0:2], ("failed", code))
+
+    def test_research_sources_are_saved_before_run_completes(self) -> None:
+        self.client.post(
+            "/api/memory/facts",
+            headers=self.mutation,
+            json={"request_id": "fact-order-1", "content": "Mutiny is local."},
+        )
+        self.llm.rewrite_reply = '["Mutiny local"]'
+        self.llm.reply = "The notes say Mutiny is local."
+        db = self.app.state.services.db
+        original_add_source = db.add_source
+        observed_statuses: list[str] = []
+
+        async def observe_source_insert(**kwargs):
+            current = await db.get_run(kwargs["run_id"])
+            observed_statuses.append(current["status"])
+            return await original_add_source(**kwargs)
+
+        with patch.object(db, "add_source", new=observe_source_insert):
+            response = self.client.post(
+                "/api/tools/research/runs",
+                headers=self.mutation,
+                json={
+                    "request_id": "run-order-1",
+                    "arguments": {"question": "What is Mutiny?"},
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "complete")
+        self.assertEqual(observed_statuses, ["running"])
+
+    def test_research_get_returns_sanitized_output_and_same_sources(self) -> None:
+        for index, content in enumerate(
+            ("Mutiny first grounded fact.", "Mutiny second grounded fact."),
+            start=1,
+        ):
+            self.client.post(
+                "/api/memory/facts",
+                headers=self.mutation,
+                json={"request_id": f"fact-citation-{index}", "content": content},
+            )
+        self.llm.rewrite_reply = '["Mutiny grounded"]'
+        self.llm.reply = (
+            "Grounded answer [https://writer.invalid/source](https://writer.invalid/source) "
+            "http://bare.invalid [1] [2] [0] [99]"
+        )
+
+        with patch.object(self.llm, "generate_response", new=AsyncMock(wraps=self.llm.generate_response)) as writer_recorder:
+            response = self.client.post(
+                "/api/tools/research/runs",
+                headers=self.mutation,
+                json={
+                    "request_id": "run-citation-1",
+                    "arguments": {"question": "What is grounded?"},
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        posted = response.json()
+        fetched_response = self.client.get(f"/api/runs/{posted['id']}")
+        self.assertEqual(fetched_response.status_code, 200)
+        fetched = fetched_response.json()
+
+        self.assertEqual(fetched["output"], posted["output"])
+        self.assertNotIn("http://", fetched["output"].lower())
+        self.assertNotIn("https://", fetched["output"].lower())
+        self.assertIn("[1]", fetched["output"])
+        self.assertIn("[2]", fetched["output"])
+        self.assertNotIn("[0]", fetched["output"])
+        self.assertNotIn("[99]", fetched["output"])
+        self.assertEqual(
+            [source["record_id"] for source in fetched["sources"]],
+            [source["record_id"] for source in posted["sources"]],
+        )
+        self.assertEqual(len(fetched["sources"]), 2)
+        self.assertTrue(all(source["external_url"] is None for source in fetched["sources"]))
+        writer_messages = next(
+            call.kwargs["messages"]
+            for call in writer_recorder.await_args_list
+            if any(
+                message.get("role") == "system"
+                and "Answer only from the numbered notes" in message.get("content", "")
+                for message in call.kwargs["messages"]
+            )
+        )
+        writer_user_prompt = next(
+            message["content"] for message in writer_messages if message.get("role") == "user"
+        )
+        notes_prompt, _question_prompt = writer_user_prompt.split("\n\nQuestion: ", 1)
+        expected_notes_prompt = "Notes:\n" + "\n".join(
+            f"[{index}] {source['excerpt']}"
+            for index, source in enumerate(fetched["sources"], start=1)
+        )
+        self.assertEqual(notes_prompt, expected_notes_prompt)
+
+    def test_research_source_save_failure_marks_run_failed(self) -> None:
+        self.client.post(
+            "/api/memory/facts",
+            headers=self.mutation,
+            json={"request_id": "fact-source-failure-1", "content": "Mutiny is local."},
+        )
+        self.llm.rewrite_reply = '["Mutiny local"]'
+        self.llm.reply = "The notes say Mutiny is local."
+        db = self.app.state.services.db
+
+        with patch.object(db, "add_source", new=AsyncMock(side_effect=RuntimeError("disk detail"))):
+            response = self.client.post(
+                "/api/tools/research/runs",
+                headers=self.mutation,
+                json={
+                    "request_id": "run-source-failure-1",
+                    "arguments": {"question": "What is Mutiny?"},
+                },
+            )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json()["error"]["code"], "source_persistence_failed")
+        self.assertNotIn("disk detail", response.text)
+        status, error_code, output = self._run_row("run-source-failure-1")
+        self.assertEqual((status, error_code), ("failed", "source_persistence_failed"))
+        self.assertEqual(output, "The notes say Mutiny is local.")
+
 
 class ChatConflictTests(unittest.IsolatedAsyncioTestCase):
     async def test_pending_turn_rejects_a_second_request(self) -> None:
@@ -350,6 +517,38 @@ class ChatConflictTests(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(ChatConflict):
             await send_message(db, FakeLLM(), thread_id=thread["id"], request_id="next", content="hello")
+        await db.close()
+
+    async def test_run_source_order_follows_insert_rowid_when_timestamps_and_ids_tie(self) -> None:
+        class UUIDStub:
+            def __init__(self, value: str) -> None:
+                self.hex = value
+
+        db = DatabaseManager(":memory:")
+        await db.setup_database()
+        run = await db.create_run(tool_name="research", request_id="source-order-run")
+
+        with patch(
+            "database.db.uuid.uuid4",
+            side_effect=[UUIDStub("f" * 32), UUIDStub("0" * 32)],
+        ), patch("database.db.utc_now", return_value="2026-09-25T00:00:00+00:00"):
+            await db.add_source(
+                run_id=run["id"],
+                kind="fact",
+                title="First",
+                excerpt="First excerpt",
+                record_id="first",
+            )
+            await db.add_source(
+                run_id=run["id"],
+                kind="fact",
+                title="Second",
+                excerpt="Second excerpt",
+                record_id="second",
+            )
+
+        sources = await db.list_sources(run_id=run["id"])
+        self.assertEqual([source["record_id"] for source in sources], ["first", "second"])
         await db.close()
 
 

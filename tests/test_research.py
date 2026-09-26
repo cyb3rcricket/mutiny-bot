@@ -2,7 +2,9 @@ from pathlib import Path
 import tempfile
 from typing import Any
 import unittest
+from unittest.mock import patch
 
+import core.research as research_module
 from core.research import _parse_rewrite_queries, run_research
 from memory.palace import MemoryHit
 
@@ -100,6 +102,71 @@ class ResearchPipelineTests(unittest.IsolatedAsyncioTestCase):
         for call in llm.calls:
             self.assertIsNone(call["tools"])
 
+    async def test_writer_urls_and_invalid_citations_are_removed(self) -> None:
+        db = FakeDB(
+            facts=[
+                {"id": 1, "content": "Mutiny runs models locally."},
+                {"id": 2, "content": "Mutiny default chat uses local tools."},
+            ]
+        )
+        palace = FakePalace()
+        llm = FakeLLM(
+            rewrite_reply='["Mutiny"]',
+            writer_reply=(
+                "Mutiny runs models locally. "
+                "[https://example.invalid/not-a-source](https://example.invalid/not-a-source) "
+                "http://raw.invalid https://raw.invalid <https://angle.invalid> "
+                "(https://paren.invalid) \"https://quote.invalid\" `https://tick.invalid` "
+                "http:// https:// [1] [2] [0] [-1] [99] "
+                "[99999999999999999999999999999999999999999999999999]"
+            ),
+        )
+
+        result = await run_research(db, palace, llm, question="What is Mutiny?")
+
+        self.assertIn("Mutiny runs models locally.", result["answer"])
+        self.assertIn("[1]", result["answer"])
+        self.assertIn("[2]", result["answer"])
+        self.assertNotIn("[0]", result["answer"])
+        self.assertNotIn("[-1]", result["answer"])
+        self.assertNotIn("[99]", result["answer"])
+        self.assertNotIn("example.invalid", result["answer"])
+        self.assertNotIn("http://", result["answer"].lower())
+        self.assertNotIn("https://", result["answer"].lower())
+        self.assertNotIn("[]()", result["answer"])
+        self.assertEqual(len(result["sources"]), 2)
+        self.assertTrue(all(source["external_url"] is None for source in result["sources"]))
+
+    async def test_writer_url_only_output_falls_back_to_sanitized_excerpt(self) -> None:
+        db = FakeDB(facts=[{"id": 1, "content": "Grounded local fact."}])
+        palace = FakePalace()
+        llm = FakeLLM(
+            rewrite_reply='["Grounded"]',
+            writer_reply="[https://writer.invalid](https://writer.invalid)",
+        )
+
+        result = await run_research(db, palace, llm, question="What is grounded?")
+
+        self.assertEqual(result["answer"], "Grounded local fact.")
+        self.assertNotIn("http://", result["answer"].lower())
+        self.assertNotIn("https://", result["answer"].lower())
+
+    async def test_url_only_retrieved_excerpt_uses_no_claim_fallback(self) -> None:
+        db = FakeDB(facts=[{"id": 1, "content": "https://stored.invalid/source"}])
+        palace = FakePalace()
+        llm = FakeLLM(
+            rewrite_reply='["stored"]',
+            writer_reply="https://writer.invalid/source",
+        )
+
+        result = await run_research(db, palace, llm, question="What is stored?")
+
+        self.assertEqual(result["answer"], "No usable retrieved excerpt remains.")
+        self.assertNotIn("http://", result["answer"].lower())
+        self.assertNotIn("https://", result["answer"].lower())
+        self.assertEqual(result["sources"][0]["excerpt"], "https://stored.invalid/source")
+        self.assertIsNone(result["sources"][0]["external_url"])
+
     async def test_mode_web_or_wiki_errors(self) -> None:
         db = FakeDB()
         palace = FakePalace()
@@ -192,6 +259,59 @@ class ResearchPipelineTests(unittest.IsolatedAsyncioTestCase):
         # Even though two queries were executed and both matched the same fact, only one source is returned
         self.assertEqual(len(result["sources"]), 1)
         self.assertEqual(result["sources"][0]["record_id"], "1")
+
+    async def test_queries_only_include_rewrites_that_retrieval_executed(self) -> None:
+        db = FakeDB(facts=[{"id": 1, "content": "The first phrase matches this fact."}])
+        palace = FakePalace()
+        llm = FakeLLM(rewrite_reply='["first phrase", "second phrase", "third phrase"]')
+        recall_queries: list[str] = []
+        original_recall = research_module.recall
+
+        async def track_recall(db_arg, palace_arg, *, query: str = "", limit: int = 20):
+            recall_queries.append(query)
+            return await original_recall(db_arg, palace_arg, query=query, limit=limit)
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
+            research_module, "recall", new=track_recall
+        ):
+            result = await run_research(
+                db,
+                palace,
+                llm,
+                question="Which phrase matches?",
+                limit=1,
+                docs_path=Path(temp_dir),
+            )
+
+        self.assertEqual(recall_queries, ["first phrase"])
+        self.assertEqual(result["queries"], ["first phrase"])
+        self.assertEqual([source["record_id"] for source in result["sources"]], ["1"])
+
+    async def test_zero_source_result_reports_every_nonblank_query_that_ran(self) -> None:
+        db = FakeDB(facts=[])
+        palace = FakePalace()
+        llm = FakeLLM(rewrite_reply='["first missing phrase", "", "second missing phrase"]')
+        recall_queries: list[str] = []
+        original_recall = research_module.recall
+
+        async def track_recall(db_arg, palace_arg, *, query: str = "", limit: int = 20):
+            recall_queries.append(query)
+            return await original_recall(db_arg, palace_arg, query=query, limit=limit)
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
+            research_module, "recall", new=track_recall
+        ):
+            result = await run_research(
+                db,
+                palace,
+                llm,
+                question="Which phrases are absent?",
+                docs_path=Path(temp_dir),
+            )
+
+        self.assertEqual(recall_queries, ["first missing phrase", "second missing phrase"])
+        self.assertEqual(result["queries"], recall_queries)
+        self.assertEqual(result["sources"], [])
 
     async def test_derives_gaps_when_writer_indicates_notes_do_not_contain_answer(self) -> None:
         db = FakeDB(
@@ -445,4 +565,3 @@ class LocalDocumentResearchTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

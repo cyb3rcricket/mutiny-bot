@@ -356,6 +356,30 @@ async def run_tool(request: Request, name: str, body: ToolRunCreate) -> JSONResp
     except LLMError as exc:
         await services.db.finish_run(run["id"], status="failed", error_code=exc.code, output=exc.message)
         return json_error(503, exc.code, exc.message, retryable=exc.retryable)
+    except Exception:
+        if name != "research":
+            raise
+        await services.db.finish_run(
+            run["id"],
+            status="failed",
+            error_code="research_failed",
+            output="Research could not be completed.",
+        )
+        return json_error(500, "research_failed", "Research could not be completed.")
+
+    try:
+        for source in sources:
+            await services.db.add_source(run_id=run["id"], **source)
+    except Exception:
+        await services.db.finish_run(
+            run["id"],
+            status="failed",
+            output=output,
+            error_code="source_persistence_failed",
+            arguments=final_arguments,
+        )
+        return json_error(500, "source_persistence_failed", "Sources could not be saved.")
+
     await services.db.finish_run(
         run["id"],
         status="failed" if error_code else "complete",
@@ -363,8 +387,6 @@ async def run_tool(request: Request, name: str, body: ToolRunCreate) -> JSONResp
         error_code=error_code,
         arguments=final_arguments,
     )
-    for source in sources:
-        await services.db.add_source(run_id=run["id"], **source)
     stored = await services.db.get_run(run["id"])
     return JSONResponse(stored or {})
 
@@ -496,17 +518,14 @@ async def _execute_manual(services: Any, name: str, arguments: dict[str, Any]) -
             limit = int(arguments.get("limit") or 8)
         except (ValueError, TypeError):
             limit = 8
-        try:
-            result = await run_research(
-                services.db,
-                services.palace,
-                services.llm,
-                question=question,
-                mode=mode,
-                limit=limit,
-            )
-        except ValueError as exc:
-            return str(exc), [], "unsupported_mode", None
+        result = await run_research(
+            services.db,
+            services.palace,
+            services.llm,
+            question=question,
+            mode=mode,
+            limit=limit,
+        )
         arguments_payload = {
             "question": result["question"],
             "mode": result["mode"],

@@ -741,7 +741,7 @@ class DatabaseManager:
             )
         elif run_id:
             cursor = await db.execute(
-                "SELECT * FROM sources WHERE run_id = ? ORDER BY retrieved_at ASC, id ASC",
+                "SELECT * FROM sources WHERE run_id = ? ORDER BY rowid ASC",
                 (run_id,),
             )
         else:

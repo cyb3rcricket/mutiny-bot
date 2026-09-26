@@ -276,6 +276,75 @@ def _detect_unknown_in_answer(answer: str) -> bool:
     return any(p.search(answer) for p in _UNKNOWN_PATTERNS)
 
 
+_CLOSED_URL_PATTERN = re.compile(r"(?i)https?://[^\s<>\[\]\"'`()]*")
+_CLOSED_CITATION_PATTERN = re.compile(r"\[(-?\d+)\]")
+_CLOSED_URL_MARKER = "\ue000mutiny-url\ue001"
+
+
+def _sanitize_closed_answer(answer: Any, sources: list[dict[str, Any]]) -> str:
+    """Remove untrusted URLs and out-of-range source references from closed output."""
+
+    def sanitize_text(value: Any) -> str:
+        text = str(value or "")
+
+        def mark_url(match: re.Match[str]) -> str:
+            token = match.group(0)
+            trailing = ""
+            while token and token[-1] in ".,;:!?":
+                trailing = token[-1] + trailing
+                token = token[:-1]
+            return _CLOSED_URL_MARKER + trailing
+
+        text = _CLOSED_URL_PATTERN.sub(mark_url, text)
+        marker = re.escape(_CLOSED_URL_MARKER)
+        text = re.sub(
+            rf"\[([^\]]*)\]\(\s*[<\"'`]?{marker}([.,;:!?])?[>\"'`]?\s*\)",
+            r"\1\2",
+            text,
+        )
+        wrappers = (
+            (r"<", r">"),
+            (r"\(", r"\)"),
+            (r"\[", r"\]"),
+            ('"', '"'),
+            ("'", "'"),
+            ("`", "`"),
+        )
+        for _ in range(2):
+            for opening, closing in wrappers:
+                text = re.sub(
+                    rf"{opening}\s*{marker}\s*([.,;:!?])?\s*{closing}",
+                    r"\1",
+                    text,
+                )
+        text = text.replace(_CLOSED_URL_MARKER, "")
+
+        source_count = len(sources)
+
+        def keep_citation(match: re.Match[str]) -> str:
+            try:
+                reference = int(match.group(1))
+            except (TypeError, ValueError):
+                return ""
+            return match.group(0) if 1 <= reference <= source_count else ""
+
+        return _CLOSED_CITATION_PATTERN.sub(keep_citation, text)
+
+    def has_substantive_text(text: str) -> bool:
+        without_citations = _CLOSED_CITATION_PATTERN.sub("", text)
+        return any(character.isalnum() for character in without_citations)
+
+    sanitized = sanitize_text(answer).strip()
+    if has_substantive_text(sanitized):
+        return sanitized
+
+    for source in sources:
+        excerpt = sanitize_text(source.get("excerpt", "")).strip()
+        if has_substantive_text(excerpt):
+            return excerpt[:500].rstrip()
+    return "No usable retrieved excerpt remains."
+
+
 async def run_research(
     db: DatabaseManager | Any,
     palace: PalaceAdapter | Any,
@@ -311,7 +380,7 @@ async def run_research(
         }
 
     # Query rewrite (optional best-effort)
-    queries = [clean_question]
+    query_candidates = [clean_question]
     try:
         rewrite_prompt = (
             "Given the user's research question, provide 1 to 3 short keyword search phrases "
@@ -329,10 +398,10 @@ async def run_research(
         )
         parsed = _parse_rewrite_queries(raw_rewrite)
         if parsed:
-            queries = parsed
+            query_candidates = parsed
     except Exception:
         logger.debug("Research query rewrite failed; falling back to original question.", exc_info=True)
-        queries = [clean_question]
+        query_candidates = [clean_question]
 
     # Index local documents on each run (cheap)
     indexed_docs = load_documents(docs_path)
@@ -340,9 +409,10 @@ async def run_research(
     # Retrieve with the existing recall() path + document index for each query (deduped by record_id + excerpt)
     seen_keys: set[tuple[str | None, str]] = set()
     sources: list[dict[str, Any]] = []
+    executed_queries: list[str] = []
     max_sources = max(0, int(limit))
 
-    for q in queries:
+    for q in query_candidates:
         q_clean = q.strip()
         if not q_clean:
             continue
@@ -353,6 +423,7 @@ async def run_research(
         recalled = await recall(db, palace, query=q_clean, limit=max_sources)
         raw_sources = recalled.get("sources", []) if isinstance(recalled, dict) else []
         doc_sources = keyword_match_documents(indexed_docs, q_clean, limit=max_sources) if has_terms else []
+        executed_queries.append(q_clean)
 
         combined_sources = list(raw_sources) + doc_sources
         for src in combined_sources:
@@ -397,7 +468,7 @@ async def run_research(
         return {
             "answer": "No relevant notes or memories were found matching your question.",
             "sources": [],
-            "queries": queries,
+            "queries": executed_queries,
             "gaps": ["not in retrieved notes"],
             "model": resolved_model,
             "writer": "local",
@@ -420,13 +491,14 @@ async def run_research(
         ],
         tools=None,
     )
+    answer = _sanitize_closed_answer(answer, sources)
 
     gaps = ["not in retrieved notes"] if _detect_unknown_in_answer(answer) else []
 
     return {
         "answer": answer,
         "sources": sources,
-        "queries": queries,
+        "queries": executed_queries,
         "gaps": gaps,
         "model": resolved_model,
         "writer": "local",

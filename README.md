@@ -74,10 +74,11 @@ These rules are the product. Features that break them do not ship.
 - Invented URLs, titles, or footnotes are a bug.
 
 ### Research (not in default chat)
-Research, if added, is a separate explicit action. It is never folded into ordinary `send_message`. The on-disk shape lives in [docs/research-run.md](docs/research-run.md).
+Research is an existing separate action in the Memory panel, also available at `/api/tools/research/runs`. It is never folded into ordinary `send_message`. The on-disk shape lives in [docs/research-run.md](docs/research-run.md).
 
 - Default Send stays local chat with `tools=None`.
 - Research off means today's privacy tests still pass.
+- Closed research searches saved facts, memories, and local files under `MUTINY_DOCS_PATH` (default `./research_docs`).
 - Any later web retrieval requires an explicit opt-in (outbound flag and Research mode). It does not become the default path.
 - A Research answer may only use excerpts attached to that run. If the corpus does not contain the fact, the run reports a gap instead of guessing.
 

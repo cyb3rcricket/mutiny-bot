@@ -47,10 +47,10 @@ Existing schema columns: `id`, `message_id`, `run_id`, `kind`, `title`, `excerpt
 
 - `run_id` always set.
 - `message_id` also set if the assistant bubble should show the same cards.
-- `kind` in v1: `"fact"` | `"memory"`.
-- Reserved later: `"document"` | `"wikipedia"` | `"web"`.
+- `kind` in v1: `"fact"` | `"memory"` | `"document"`.
+- Reserved later: `"wikipedia"` | `"web"`.
 - `title` and `excerpt` required.
-- `record_id` for local facts.
+- `record_id` identifies the local fact or document section.
 - `external_url` must be null in closed mode.
 - `retrieved_at` = when the snippet was attached.
 
@@ -64,4 +64,4 @@ The system must refuse:
 
 ## E. Closed Mode
 
-Closed mode looks only at things already on this machine (saved facts; later local files). Web and wiki are field values only so we do not migrate later.
+Closed mode looks only at things already on this machine: saved facts, memories, and local files under `MUTINY_DOCS_PATH` (default `./research_docs`). `.md` files are indexed directly; `.pdf` text is indexed when `pypdf` or `fitz` can be imported by the running Python environment. Web and wiki are field values only so we do not migrate later. Local document sources have `external_url = null`.
