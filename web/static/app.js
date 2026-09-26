@@ -389,7 +389,102 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && DRAWER_VIEWS.has(shell.dataset.view)) setView("chat");
 });
 
+function initSidebarResize() {
+  const resizer = document.querySelector("#sidebar-resizer");
+  const sidebar = document.querySelector("#sidebar");
+  if (!resizer || !sidebar) return;
+
+  const MIN_WIDTH = 160;
+  const DEFAULT_WIDTH = 240;
+
+  function getMaxWidth() {
+    return Math.max(MIN_WIDTH, Math.min(800, window.innerWidth - 320));
+  }
+
+  function setWidth(width, save = true) {
+    const clamped = Math.max(MIN_WIDTH, Math.min(getMaxWidth(), Math.round(width)));
+    document.documentElement.style.setProperty("--sidebar", `${clamped}px`);
+    resizer.setAttribute("aria-valuenow", String(clamped));
+    if (save) {
+      try {
+        localStorage.setItem("mutiny_sidebar_width", String(clamped));
+      } catch (_) {}
+    }
+    return clamped;
+  }
+
+  try {
+    const saved = localStorage.getItem("mutiny_sidebar_width");
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (!Number.isNaN(parsed)) setWidth(parsed, false);
+    }
+  } catch (_) {}
+
+  let isDragging = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  resizer.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    if (window.matchMedia("(max-width: 899px)").matches) return;
+    isDragging = true;
+    resizer.setPointerCapture(event.pointerId);
+    startX = event.clientX;
+    startWidth = sidebar.getBoundingClientRect().width;
+    resizer.classList.add("is-resizing");
+    document.body.classList.add("resizing-sidebar");
+    event.preventDefault();
+  });
+
+  resizer.addEventListener("pointermove", (event) => {
+    if (!isDragging) return;
+    const delta = event.clientX - startX;
+    setWidth(startWidth + delta, false);
+  });
+
+  function stopDragging(event) {
+    if (!isDragging) return;
+    isDragging = false;
+    try {
+      resizer.releasePointerCapture(event.pointerId);
+    } catch (_) {}
+    resizer.classList.remove("is-resizing");
+    document.body.classList.remove("resizing-sidebar");
+    const finalWidth = sidebar.getBoundingClientRect().width;
+    setWidth(finalWidth, true);
+  }
+
+  resizer.addEventListener("pointerup", stopDragging);
+  resizer.addEventListener("pointercancel", stopDragging);
+
+  resizer.addEventListener("dblclick", () => {
+    if (window.matchMedia("(max-width: 899px)").matches) return;
+    setWidth(DEFAULT_WIDTH, true);
+  });
+
+  resizer.addEventListener("keydown", (event) => {
+    if (window.matchMedia("(max-width: 899px)").matches) return;
+    const current = sidebar.getBoundingClientRect().width;
+    const step = event.shiftKey ? 30 : 10;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setWidth(current - step, true);
+    } else if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setWidth(current + step, true);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setWidth(MIN_WIDTH, true);
+    } else if (event.key === "End" || event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setWidth(DEFAULT_WIDTH, true);
+    }
+  });
+}
+
 async function boot() {
+  initSidebarResize();
   await api("/api/session");
   await loadSettings();
   await loadThreads();

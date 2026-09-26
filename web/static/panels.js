@@ -59,10 +59,10 @@ export function renderJobs(list, jobs, onOpen, onPause, onStop) {
     const when = job.schedule ? `${job.schedule.time || ""} ${job.schedule.timezone || ""}` : "";
     item.append(el("p", "meta", `${job.tool_name} · ${when} · ${job.paused ? "paused" : "active"}`));
     const actions = el("div", "job-actions");
-    const pause = el("button", "", job.paused ? "Resume" : "Pause");
+    const pause = el("button", "btn btn-sm btn-outline-secondary", job.paused ? "Resume" : "Pause");
     pause.type = "button";
     pause.addEventListener("click", () => onPause(job));
-    const stop = el("button", "", "Stop");
+    const stop = el("button", "btn btn-sm btn-outline-danger", "Stop");
     stop.type = "button";
     stop.addEventListener("click", () => onStop(job));
     actions.append(pause, stop);

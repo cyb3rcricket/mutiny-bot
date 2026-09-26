@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mutiny</title>
+  <link rel="stylesheet" href="/bootstrap.min.css">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -11,32 +12,33 @@
     <header class="topbar">
       <p class="mark">Mutiny</p>
       <nav class="nav" aria-label="Sections">
-        <button type="button" data-view="threads">Threads</button>
-        <button type="button" data-view="chat" aria-current="page">Chat</button>
-        <button type="button" data-view="settings">Settings</button>
-        <button type="button" data-view="memory">Memory</button>
-        <button type="button" data-view="jobs">Jobs</button>
-        <button type="button" data-view="privacy">Privacy</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-view="threads">Threads</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-view="chat" aria-current="page">Chat</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-view="settings">Settings</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-view="memory">Memory</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-view="jobs">Jobs</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-view="privacy">Privacy</button>
       </nav>
     </header>
 
     <aside class="sidebar" id="sidebar" aria-label="Conversations">
       <div class="sidebar-head">
         <h1>Conversations</h1>
-        <button type="button" id="new-thread">New</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="new-thread">New</button>
       </div>
-      <ul id="thread-list" class="thread-list"></ul>
+      <ul id="thread-list" class="thread-list list-unstyled"></ul>
+      <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" aria-valuenow="240" aria-valuemin="160" aria-valuemax="800" tabindex="0" title="Drag to resize sidebar (double-click to reset)"></div>
     </aside>
 
     <main class="conversation" id="conversation">
       <header class="conv-head">
         <h2 id="thread-title">No conversation</h2>
         <div class="thread-actions">
-          <button type="button" id="clear-history">Clear history</button>
-          <button type="button" id="reset-context">Reset context</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="clear-history">Clear history</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" id="reset-context">Reset context</button>
         </div>
       </header>
-      <p id="action-note" class="note" hidden></p>
+      <p id="action-note" class="note text-muted small" hidden></p>
       <p id="banner" class="banner" role="status" hidden></p>
       <div id="transcript" class="transcript" aria-live="polite"></div>
       <section id="tool-result" class="tool-result" hidden>
@@ -49,9 +51,9 @@
         <div class="worksheet-head">
           <h3>Research worksheet</h3>
           <div class="worksheet-actions">
-            <button type="button" id="research-copy">Copy markdown</button>
-            <button type="button" id="research-download">Download</button>
-            <button type="button" id="research-close">Close</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="research-copy">Copy markdown</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="research-download">Download</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="research-close">Close</button>
           </div>
         </div>
         <p id="research-meta" class="meta"></p>
@@ -77,9 +79,9 @@
         </div>
       </section>
       <form id="composer" class="composer">
-        <label id="model-label" for="composer-input">Message</label>
-        <textarea id="composer-input" rows="3" maxlength="32000" placeholder="Write a message"></textarea>
-        <button type="submit" id="send">Send</button>
+        <label id="model-label" for="composer-input" class="form-label">Message</label>
+        <textarea id="composer-input" class="form-control" rows="3" maxlength="32000" placeholder="Write a message"></textarea>
+        <button type="submit" id="send" class="btn btn-primary">Send</button>
       </form>
     </main>
 
@@ -87,37 +89,37 @@
       <section id="panel-settings" class="panel" hidden>
         <h2>Model and personality</h2>
         <form id="settings-form">
-          <label for="model-select">Installed model</label>
-          <select id="model-select"></select>
+          <label for="model-select" class="form-label">Installed model</label>
+          <select id="model-select" class="form-select form-select-sm"></select>
           <p id="model-status" class="note"></p>
-          <label for="personality">Personality</label>
-          <textarea id="personality" rows="8" maxlength="10000"></textarea>
-          <label for="timezone">Timezone</label>
-          <input id="timezone" type="text" autocomplete="off" spellcheck="false">
-          <button type="submit">Save settings</button>
+          <label for="personality" class="form-label">Personality</label>
+          <textarea id="personality" class="form-control" rows="8" maxlength="10000"></textarea>
+          <label for="timezone" class="form-label">Timezone</label>
+          <input id="timezone" class="form-control form-control-sm" type="text" autocomplete="off" spellcheck="false">
+          <button type="submit" class="btn btn-primary btn-sm">Save settings</button>
         </form>
       </section>
 
       <section id="panel-memory" class="panel" hidden>
         <h2>Memory</h2>
         <form id="remember-form">
-          <label for="remember-text">Remember this</label>
-          <textarea id="remember-text" rows="4" maxlength="32000"></textarea>
-          <button type="submit">Remember</button>
+          <label for="remember-text" class="form-label">Remember this</label>
+          <textarea id="remember-text" class="form-control" rows="4" maxlength="32000"></textarea>
+          <button type="submit" class="btn btn-primary btn-sm">Remember</button>
         </form>
         <h3>Saved facts</h3>
-        <ul id="fact-list" class="fact-list"></ul>
+        <ul id="fact-list" class="fact-list list-unstyled"></ul>
         <form id="recall-form">
-          <label for="recall-query">Recall</label>
-          <input id="recall-query" type="text" autocomplete="off">
-          <button type="submit">Recall</button>
+          <label for="recall-query" class="form-label">Recall</label>
+          <input id="recall-query" class="form-control form-control-sm" type="text" autocomplete="off">
+          <button type="submit" class="btn btn-outline-secondary btn-sm">Recall</button>
         </form>
         <form id="ask-form">
-          <label for="ask-question">Ask notes</label>
-          <textarea id="ask-question" rows="3"></textarea>
+          <label for="ask-question" class="form-label">Ask notes</label>
+          <textarea id="ask-question" class="form-control" rows="3"></textarea>
           <div class="form-actions">
-            <button type="submit">Ask</button>
-            <button type="button" id="research-notes">Research notes</button>
+            <button type="submit" class="btn btn-primary btn-sm">Ask</button>
+            <button type="button" id="research-notes" class="btn btn-outline-secondary btn-sm">Research notes</button>
           </div>
         </form>
       </section>
@@ -125,17 +127,17 @@
       <section id="panel-jobs" class="panel" hidden>
         <h2>Jobs</h2>
         <p id="jobs-status" class="note"></p>
-        <button type="button" id="run-briefing">Run briefing</button>
+        <button type="button" id="run-briefing" class="btn btn-outline-secondary btn-sm">Run briefing</button>
         <form id="job-form">
-          <label for="job-name">Name</label>
-          <input id="job-name" type="text" maxlength="120" required>
-          <label for="job-time">Daily time</label>
-          <input id="job-time" type="time" value="07:15" required>
-          <label for="job-zone">Timezone</label>
-          <input id="job-zone" type="text" autocomplete="off" spellcheck="false" required>
-          <button type="submit">Schedule briefing</button>
+          <label for="job-name" class="form-label">Name</label>
+          <input id="job-name" class="form-control form-control-sm" type="text" maxlength="120" required>
+          <label for="job-time" class="form-label">Daily time</label>
+          <input id="job-time" class="form-control form-control-sm" type="time" value="07:15" required>
+          <label for="job-zone" class="form-label">Timezone</label>
+          <input id="job-zone" class="form-control form-control-sm" type="text" autocomplete="off" spellcheck="false" required>
+          <button type="submit" class="btn btn-primary btn-sm">Schedule briefing</button>
         </form>
-        <ul id="job-list" class="job-list"></ul>
+        <ul id="job-list" class="job-list list-unstyled"></ul>
         <div id="job-runs"></div>
       </section>
 
@@ -152,7 +154,7 @@
       <p id="source-kind" class="meta"></p>
       <p id="source-excerpt"></p>
       <p id="source-link"></p>
-      <button value="close">Close</button>
+      <button value="close" class="btn btn-sm btn-outline-secondary">Close</button>
     </form>
   </dialog>
   <script type="module" src="/app.js"></script>

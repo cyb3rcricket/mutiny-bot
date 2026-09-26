@@ -50,7 +50,7 @@ export function renderMessages(transcript, messages, onSource) {
 export function sourceRow(sources, onSource) {
   const row = el("div", "sources");
   sources.forEach((source, index) => {
-    const chip = el("button", "", source.title || source.kind || "Source");
+    const chip = el("button", "btn btn-sm btn-outline-secondary", source.title || source.kind || "Source");
     chip.type = "button";
     chip.addEventListener("click", () => onSource(source, index));
     row.append(chip);

@@ -10,6 +10,25 @@
   --sans: "Segoe UI", system-ui, sans-serif;
   --sidebar: 240px;
   --drawer: 320px;
+
+  /* Bootstrap 5 Theme Variable Overrides */
+  --bs-body-bg: var(--bg);
+  --bs-body-color: var(--text);
+  --bs-body-font-family: var(--sans);
+  --bs-font-sans-serif: var(--sans);
+  --bs-primary: var(--accent);
+  --bs-primary-rgb: 169, 178, 143;
+  --bs-secondary: var(--muted);
+  --bs-secondary-rgb: 167, 170, 160;
+  --bs-danger: var(--danger);
+  --bs-danger-rgb: 215, 163, 148;
+  --bs-border-color: #2c2f2b;
+  --bs-border-color-translucent: rgba(255, 255, 255, 0.08);
+  --bs-card-bg: var(--surface);
+  --bs-card-border-color: #2c2f2b;
+  --bs-card-color: var(--text);
+  --bs-link-color: var(--accent);
+  --bs-link-hover-color: #bcc4a2;
 }
 
 * { box-sizing: border-box; }
@@ -23,6 +42,69 @@ html, body {
 }
 
 body { overflow: hidden; }
+
+/* Bootstrap component styling preserving theme colors and fonts */
+.btn-primary {
+  --bs-btn-color: var(--bg);
+  --bs-btn-bg: var(--accent);
+  --bs-btn-border-color: var(--accent);
+  --bs-btn-hover-color: var(--bg);
+  --bs-btn-hover-bg: #bcc4a2;
+  --bs-btn-hover-border-color: #bcc4a2;
+  --bs-btn-focus-shadow-rgb: 169, 178, 143;
+  --bs-btn-active-color: var(--bg);
+  --bs-btn-active-bg: var(--accent);
+  --bs-btn-active-border-color: var(--accent);
+  --bs-btn-disabled-color: var(--bg);
+  --bs-btn-disabled-bg: #5f6356;
+  --bs-btn-disabled-border-color: #5f6356;
+}
+
+.btn-outline-secondary {
+  --bs-btn-color: var(--text);
+  --bs-btn-border-color: #3a3d38;
+  --bs-btn-bg: var(--bg);
+  --bs-btn-hover-bg: var(--surface);
+  --bs-btn-hover-border-color: var(--accent);
+  --bs-btn-hover-color: var(--accent);
+  --bs-btn-active-bg: var(--surface);
+  --bs-btn-active-border-color: var(--accent);
+  --bs-btn-active-color: var(--accent);
+}
+
+.btn-outline-danger {
+  --bs-btn-color: var(--danger);
+  --bs-btn-border-color: #5c3d38;
+  --bs-btn-bg: var(--bg);
+  --bs-btn-hover-bg: var(--surface);
+  --bs-btn-hover-border-color: var(--danger);
+  --bs-btn-hover-color: var(--danger);
+}
+
+.form-control, .form-select {
+  background-color: var(--bg);
+  color: var(--text);
+  border: 1px solid #3a3d38;
+  border-radius: 4px;
+}
+
+.form-control:focus, .form-select:focus {
+  background-color: var(--bg);
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(169, 178, 143, 0.25);
+}
+
+.form-control::placeholder {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.form-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-bottom: 0.25rem;
+}
 
 button, input, select, textarea {
   font: inherit;
@@ -61,9 +143,14 @@ button:hover { border-color: var(--accent); }
   border-bottom: 1px solid #2c2f2b;
 }
 
-.mark {
+/* Reset Bootstrap .mark highlight styling */
+.topbar .mark, .mark {
   margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
   font-family: var(--serif);
+  font-size: 1.15rem;
   letter-spacing: 0.04em;
 }
 
@@ -87,6 +174,64 @@ button:hover { border-color: var(--accent); }
   background: var(--surface);
   padding: 0.9rem;
   overflow: auto;
+}
+
+.sidebar {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-right: 1px solid #2c2f2b;
+}
+
+.sidebar .thread-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  touch-action: none;
+  z-index: 10;
+}
+
+.sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2px;
+  background: #2c2f2b;
+  transition: background-color 0.15s ease, width 0.15s ease;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer.is-resizing::after,
+.sidebar-resizer:focus-visible::after {
+  background: var(--accent);
+  width: 3px;
+}
+
+.sidebar-resizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+body.resizing-sidebar {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.resizing-sidebar * {
+  user-select: none !important;
 }
 
 .sidebar-head, .conv-head, .thread-actions {
@@ -116,6 +261,7 @@ h1, h2, h3 {
   border-radius: 0;
   padding: 0.55rem 0.2rem;
   border-bottom: 1px solid #2c2f2b;
+  color: var(--text);
 }
 
 .thread-list button[aria-current="true"] { color: var(--accent); }
@@ -302,7 +448,7 @@ dialog p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
 }
 
 @media (max-width: 899px) {
-  .sidebar, .conversation, .drawer { display: none; }
+  .sidebar, .conversation, .drawer, .sidebar-resizer { display: none; }
   .shell[data-view="threads"] .sidebar,
   .shell[data-view="chat"] .conversation,
   .shell[data-view="settings"] .drawer,
