@@ -18,6 +18,7 @@ Mutiny is a single-user localhost console for local Ollama chat, SQLite-backed t
 - [web/security.py](web/security.py): Loopback host enforcement, process-bound HttpOnly session tokens, Origin and `X-Mutiny-Request` mutation guards, and Content Security Policy headers.
 - [llm/llm_handler.py](llm/llm_handler.py): Local inference through `litellm` and Ollama, enforcing loopback-only endpoints, rejecting cloud model identifiers, and sanitizing tool calls.
 - [database/migrations.py](database/migrations.py): Versioned SQLite schema migrations with pre-upgrade atomic database backups and legacy record transformations.
+- [docs/research-run.md](docs/research-run.md): Frozen on-disk contract for research runs, arguments_json shape, snippet sources, and refusal rules.
 
 ## Run
 
@@ -51,6 +52,34 @@ Copy `.env.example` to `.env` to override the port, database path, automation ti
 - Outbound news monitoring is disabled. `requirements-news.txt` is not installed by default, and the dormant news monitor module in the codebase is neither scheduled nor exposed in the UI.
 - The web session relies on an HttpOnly cookie generated per process run. It is not an account system.
 - State-modifying requests require matching page Origin headers and the `X-Mutiny-Request` header. OpenAPI and documentation routes are disabled to prevent loading third-party CDNs.
+
+## Contract
+
+These rules are the product. Features that break them do not ship.
+
+### Chat
+- The Send button is local inference only.
+- Ordinary chat does not call tools and does not browse the web.
+- Chat uses only a loopback Ollama endpoint and a locally installed model.
+- Cloud model IDs and non-loopback Ollama URLs are rejected.
+
+### Process
+- The server binds only to a loopback address. There is no LAN or public bind.
+- Importing the app, starting the process, and sending a normal chat message must not open a non-loopback connection.
+- The console does not download model files.
+- Outbound news monitoring stays dormant and unscheduled.
+
+### Sources
+- A citation is allowed only for a record Mutiny actually stored or retrieved for that turn.
+- Invented URLs, titles, or footnotes are a bug.
+
+### Research (not in default chat)
+Research, if added, is a separate explicit action. It is never folded into ordinary `send_message`. The on-disk shape lives in [docs/research-run.md](docs/research-run.md).
+
+- Default Send stays local chat with `tools=None`.
+- Research off means today's privacy tests still pass.
+- Any later web retrieval requires an explicit opt-in (outbound flag and Research mode). It does not become the default path.
+- A Research answer may only use excerpts attached to that run. If the corpus does not contain the fact, the run reports a gap instead of guessing.
 
 ## What you can do
 
