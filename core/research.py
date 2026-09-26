@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from pathlib import Path
 import re
 from typing import Any
 
+import config
 from database.db import DatabaseManager
 from llm.llm_handler import LLMHandler
 from memory.palace import PalaceAdapter
@@ -14,6 +17,188 @@ from memory.service import recall
 from tools.registry import ToolPolicy, register_ai_tool
 
 logger = logging.getLogger("mutiny_bot.research")
+
+
+def parse_markdown_document(file_path: Path, base_dir: Path) -> list[dict[str, Any]]:
+    """Parse a markdown file into titled excerpt sections split on headings."""
+    try:
+        text = file_path.read_text(encoding="utf-8")
+    except Exception:
+        return []
+
+    try:
+        rel_path = file_path.relative_to(base_dir).as_posix()
+    except Exception:
+        rel_path = file_path.name
+
+    lines = text.splitlines()
+    sections: list[dict[str, Any]] = []
+    current_heading = file_path.stem
+    current_lines: list[str] = []
+    seen_headings: dict[str, int] = {}
+
+    for line in lines:
+        match = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if match:
+            content = "\n".join(current_lines).strip()
+            if content:
+                count = seen_headings.get(current_heading, 0)
+                seen_headings[current_heading] = count + 1
+                heading_slug = current_heading if count == 0 else f"{current_heading}-{count}"
+                sections.append(
+                    {
+                        "kind": "document",
+                        "title": current_heading,
+                        "excerpt": content,
+                        "record_id": f"{rel_path}#{heading_slug}",
+                        "external_url": None,
+                    }
+                )
+            current_heading = match.group(2).strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    content = "\n".join(current_lines).strip()
+    if content:
+        count = seen_headings.get(current_heading, 0)
+        seen_headings[current_heading] = count + 1
+        heading_slug = current_heading if count == 0 else f"{current_heading}-{count}"
+        sections.append(
+            {
+                "kind": "document",
+                "title": current_heading,
+                "excerpt": content,
+                "record_id": f"{rel_path}#{heading_slug}",
+                "external_url": None,
+            }
+        )
+    return sections
+
+
+def parse_pdf_document(file_path: Path, base_dir: Path) -> list[dict[str, Any]]:
+    """Extract text from a PDF file if an extraction library is available."""
+    try:
+        rel_path = file_path.relative_to(base_dir).as_posix()
+    except Exception:
+        rel_path = file_path.name
+
+    text = ""
+    # Try pypdf
+    try:
+        import pypdf
+
+        reader = pypdf.PdfReader(str(file_path))
+        pages_text = [page.extract_text() or "" for page in reader.pages]
+        text = "\n\n".join(pages_text).strip()
+    except Exception:
+        # Try pymupdf / fitz
+        try:
+            import fitz
+
+            doc = fitz.open(str(file_path))
+            pages_text = [page.get_text() for page in doc]
+            text = "\n\n".join(pages_text).strip()
+        except Exception:
+            return []
+
+    if not text:
+        return []
+
+    sections: list[dict[str, Any]] = []
+    if re.search(r"^(#{1,6})\s+(.+)$", text, re.M):
+        lines = text.splitlines()
+        current_heading = file_path.stem
+        current_lines: list[str] = []
+        seen_headings: dict[str, int] = {}
+        for line in lines:
+            match = re.match(r"^(#{1,6})\s+(.+)$", line)
+            if match:
+                content = "\n".join(current_lines).strip()
+                if content:
+                    count = seen_headings.get(current_heading, 0)
+                    seen_headings[current_heading] = count + 1
+                    heading_slug = current_heading if count == 0 else f"{current_heading}-{count}"
+                    sections.append(
+                        {
+                            "kind": "document",
+                            "title": current_heading,
+                            "excerpt": content,
+                            "record_id": f"{rel_path}#{heading_slug}",
+                            "external_url": None,
+                        }
+                    )
+                current_heading = match.group(2).strip()
+                current_lines = []
+            else:
+                current_lines.append(line)
+        content = "\n".join(current_lines).strip()
+        if content:
+            count = seen_headings.get(current_heading, 0)
+            seen_headings[current_heading] = count + 1
+            heading_slug = current_heading if count == 0 else f"{current_heading}-{count}"
+            sections.append(
+                {
+                    "kind": "document",
+                    "title": current_heading,
+                    "excerpt": content,
+                    "record_id": f"{rel_path}#{heading_slug}",
+                    "external_url": None,
+                }
+            )
+    else:
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        if not paragraphs:
+            paragraphs = [text.strip()]
+        for idx, para in enumerate(paragraphs, start=1):
+            sections.append(
+                {
+                    "kind": "document",
+                    "title": f"{file_path.stem} (part {idx})" if len(paragraphs) > 1 else file_path.stem,
+                    "excerpt": para,
+                    "record_id": f"{rel_path}#part-{idx}",
+                    "external_url": None,
+                }
+            )
+    return sections
+
+
+def load_documents(docs_path: str | Path | None = None) -> list[dict[str, Any]]:
+    """Load and index all .md and .pdf files in docs_path split on headings."""
+    path_val = docs_path if docs_path is not None else getattr(config, "DOCS_PATH", "./research_docs")
+    base_path = Path(os.path.expanduser(str(path_val)))
+    if not base_path.is_dir():
+        return []
+
+    documents: list[dict[str, Any]] = []
+    try:
+        for doc_file in sorted(base_path.rglob("*")):
+            if not doc_file.is_file():
+                continue
+            suffix = doc_file.suffix.lower()
+            if suffix == ".md":
+                documents.extend(parse_markdown_document(doc_file, base_path))
+            elif suffix == ".pdf":
+                documents.extend(parse_pdf_document(doc_file, base_path))
+    except Exception:
+        logger.debug("Error scanning documents in %s", base_path, exc_info=True)
+    return documents
+
+
+def keyword_match_documents(
+    documents: list[dict[str, Any]], query: str, limit: int = 8
+) -> list[dict[str, Any]]:
+    """Match indexed document sections by keyword terms (terms > 2 chars)."""
+    terms = [part for part in query.lower().split() if len(part) > 2]
+    if not terms:
+        return []
+    matched = [
+        doc
+        for doc in documents
+        if any(term in doc["excerpt"].lower() or term in doc["title"].lower() for term in terms)
+    ]
+    return matched[:limit]
+
 
 _UNKNOWN_PATTERNS = [
     re.compile(r"\bmissing\b", re.I),
@@ -100,8 +285,9 @@ async def run_research(
     mode: str = "closed",
     model: str | None = None,
     limit: int = 8,
+    docs_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Execute a closed-corpus research run over local saved facts and memories."""
+    """Execute a closed-corpus research run over local saved facts, memories, and documents."""
     if mode != "closed":
         raise ValueError(
             f"Research mode '{mode}' is not implemented (wiki/web not implemented). Mutiny research currently supports 'closed' mode only."
@@ -148,7 +334,10 @@ async def run_research(
         logger.debug("Research query rewrite failed; falling back to original question.", exc_info=True)
         queries = [clean_question]
 
-    # Retrieve with the existing recall() path for each query (deduped by record_id + excerpt)
+    # Index local documents on each run (cheap)
+    indexed_docs = load_documents(docs_path)
+
+    # Retrieve with the existing recall() path + document index for each query (deduped by record_id + excerpt)
     seen_keys: set[tuple[str | None, str]] = set()
     sources: list[dict[str, Any]] = []
     max_sources = max(0, int(limit))
@@ -159,18 +348,21 @@ async def run_research(
             continue
 
         # Check if query has terms of length > 2 (the threshold memory.service uses for facts)
-        has_fact_terms = any(len(part) > 2 for part in q_clean.lower().split())
+        has_terms = any(len(part) > 2 for part in q_clean.lower().split())
 
         recalled = await recall(db, palace, query=q_clean, limit=max_sources)
         raw_sources = recalled.get("sources", []) if isinstance(recalled, dict) else []
-        for src in raw_sources:
+        doc_sources = keyword_match_documents(indexed_docs, q_clean, limit=max_sources) if has_terms else []
+
+        combined_sources = list(raw_sources) + doc_sources
+        for src in combined_sources:
             if not isinstance(src, dict):
                 continue
             kind = src.get("kind")
-            if kind not in {"fact", "memory"}:
+            if kind not in {"fact", "memory", "document"}:
                 continue
             # If query had no terms > 2, recall() returned all facts by default (not matched by keyword)
-            if kind == "fact" and not has_fact_terms:
+            if kind == "fact" and not has_terms:
                 continue
 
             record_id = src.get("record_id")
@@ -185,10 +377,11 @@ async def run_research(
                 continue
             seen_keys.add(dedupe_key)
 
+            fallback_title = "Saved fact" if kind == "fact" else ("Palace" if kind == "memory" else "Document")
             sources.append(
                 {
                     "kind": kind,
-                    "title": str(src.get("title") or ("Saved fact" if kind == "fact" else "Palace")),
+                    "title": str(src.get("title") or fallback_title),
                     "excerpt": excerpt,
                     "record_id": rec_id_str,
                     "external_url": None,

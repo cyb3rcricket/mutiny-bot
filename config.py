@@ -41,6 +41,7 @@ DB_PATH = os.getenv("MUTINY_DB_PATH", "mutiny.db")
 SCHEDULER_DB_PATH = os.getenv("SCHEDULER_DB_PATH", "mutiny_console_scheduler.db")
 LEGACY_SCHEDULER_DB_PATH = os.getenv("LEGACY_SCHEDULER_DB_PATH", "mutiny_scheduler.db")
 PALACE_PATH = os.path.expanduser(os.getenv("MUTINY_PALACE_PATH", "~/.mutiny/palace"))
+DOCS_PATH = os.path.expanduser(os.getenv("MUTINY_DOCS_PATH", "./research_docs"))
 BIND_HOST = os.getenv("MUTINY_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = int(os.getenv("MUTINY_PORT", "8765"))
 OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434").strip()

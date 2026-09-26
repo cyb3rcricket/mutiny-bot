@@ -1,0 +1,50 @@
+[
+  {
+    "id": 1,
+    "content": "Mutiny binds strictly to loopback addresses like 127.0.0.1."
+  },
+  {
+    "id": 2,
+    "content": "Default chat operates with tools=None and does not make external network calls."
+  },
+  {
+    "id": 3,
+    "content": "Saved facts and run records are persisted locally in SQLite tables."
+  },
+  {
+    "id": 4,
+    "content": "The morning briefing runs locally to summarize notes and scheduled jobs."
+  },
+  {
+    "id": 5,
+    "content": "Model inference connects only to a locally installed Ollama daemon."
+  },
+  {
+    "id": 6,
+    "content": "Outbound news monitoring is permanently disabled and cannot browse the web."
+  },
+  {
+    "id": 7,
+    "content": "The session token is an HttpOnly cookie generated per process run."
+  },
+  {
+    "id": 8,
+    "content": "Conversation transcripts survive restarts and store full assistant replies."
+  },
+  {
+    "id": 9,
+    "content": "MemPalace provides optional vector retrieval if local embedding models exist."
+  },
+  {
+    "id": 10,
+    "content": "Research mode executes closed retrieval over local facts without web access."
+  },
+  {
+    "id": 11,
+    "content": "Scheduled jobs can be paused, resumed, or stopped in the Jobs drawer."
+  },
+  {
+    "id": 12,
+    "content": "Custom system personality prompts are preserved across migrations."
+  }
+]

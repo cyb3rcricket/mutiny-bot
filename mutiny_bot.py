@@ -28,6 +28,7 @@ _KNOWN_RUNTIME_DEPENDENCIES = {
     "litellm",
     "sqlalchemy",
     "pydantic",
+    "pypdf",
 }
 
 from core.privacy import bootstrap

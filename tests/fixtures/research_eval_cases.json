@@ -1,0 +1,142 @@
+[
+  {
+    "id": "hit-loopback",
+    "question": "What loopback address does Mutiny bind to?",
+    "expect": "hit",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": ["1"]
+  },
+  {
+    "id": "hit-default-chat",
+    "question": "Does default chat operate with tools=None?",
+    "expect": "hit",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": ["2"]
+  },
+  {
+    "id": "hit-sqlite-storage",
+    "question": "Where are saved facts and run records persisted in SQLite?",
+    "expect": "hit",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": ["3"]
+  },
+  {
+    "id": "hit-morning-briefing",
+    "question": "What does the morning briefing summarize?",
+    "expect": "hit",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": ["4"]
+  },
+  {
+    "id": "hit-ollama-inference",
+    "question": "How does model inference connect to the Ollama daemon?",
+    "expect": "hit",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": ["5"]
+  },
+  {
+    "id": "hit-news-disabled",
+    "question": "Is outbound news monitoring permanently disabled?",
+    "expect": "hit",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": ["6"]
+  },
+  {
+    "id": "hit-httponly-cookie",
+    "question": "How is the session token cookie generated?",
+    "expect": "hit",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": ["7"]
+  },
+  {
+    "id": "hit-conversation-transcripts",
+    "question": "Do conversation transcripts survive process restarts?",
+    "expect": "hit",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": ["8"]
+  },
+  {
+    "id": "hit-mempalace-vector",
+    "question": "When does MemPalace provide vector retrieval?",
+    "expect": "hit",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": ["9"]
+  },
+  {
+    "id": "hit-research-mode",
+    "question": "How does closed research mode execute retrieval?",
+    "expect": "hit",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": ["10"]
+  },
+  {
+    "id": "miss-absent-weather",
+    "question": "London weather forecast tomorrow?",
+    "expect": "miss",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": []
+  },
+  {
+    "id": "miss-absent-stock-market",
+    "question": "Stock market valuations, equity tickers, dividend yields?",
+    "expect": "miss",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": []
+  },
+  {
+    "id": "miss-absent-recipe",
+    "question": "Bake sourdough artisan bread loaf?",
+    "expect": "miss",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": []
+  },
+  {
+    "id": "miss-absent-astronomy",
+    "question": "Jupiter orbital eccentricity telescope observations?",
+    "expect": "miss",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": []
+  },
+  {
+    "id": "miss-absent-gardening",
+    "question": "Pruning tomato plants hydroponic fertilizer?",
+    "expect": "miss",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": []
+  },
+  {
+    "id": "miss-decoy-kubernetes",
+    "question": "Kubernetes Helm cluster ingress deployment?",
+    "expect": "miss",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": []
+  },
+  {
+    "id": "miss-decoy-crypto",
+    "question": "Bitcoin blockchain proof-of-work mining difficulty?",
+    "expect": "miss",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": []
+  },
+  {
+    "id": "miss-decoy-bluetooth",
+    "question": "Bluetooth low energy pairing protocol handshake?",
+    "expect": "miss",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": []
+  },
+  {
+    "id": "miss-stopword-short-1",
+    "question": "is it on?",
+    "expect": "miss",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": []
+  },
+  {
+    "id": "miss-stopword-short-2",
+    "question": "to be or so?",
+    "expect": "miss",
+    "must_not_contain": ["http://", "https://"],
+    "source_record_ids": []
+  }
+]

@@ -1,7 +1,7 @@
-"""Tests for Mutiny Research phase 2: closed-mode pipeline."""
-
-import unittest
+from pathlib import Path
+import tempfile
 from typing import Any
+import unittest
 
 from core.research import _parse_rewrite_queries, run_research
 from memory.palace import MemoryHit
@@ -306,5 +306,143 @@ class ResearchPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source["excerpt"], "Valid fact content")
 
 
+class LocalDocumentResearchTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.docs_dir = Path(self.temp_dir.name)
+
+        # Create 3 sample markdown files
+        (self.docs_dir / "architecture.md").write_text(
+            "# System Architecture\nMutiny runs locally as a single-process console.\n\n"
+            "## Network Policy\nAll network endpoints bind strictly to loopback addresses."
+        )
+        (self.docs_dir / "diagnostics.md").write_text(
+            "# Diagnostic Runbook\nDiagnostic probes run strictly in-process without socket binds.\n\n"
+            "## Health Check\nInternal health status reports uptime and database connectivity."
+        )
+        (self.docs_dir / "storage.md").write_text(
+            "Local persistence stores all messages and run history in SQLite."
+        )
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    async def test_question_answered_by_file_returns_document_kind_and_no_url(self) -> None:
+        db = FakeDB(facts=[])
+        palace = FakePalace()
+        llm = FakeLLM(
+            rewrite_reply='["Network Policy", "network endpoints"]',
+            writer_reply="According to the documents, all network endpoints bind strictly to loopback addresses.",
+        )
+
+        result = await run_research(
+            db,
+            palace,
+            llm,
+            question="What is the network policy?",
+            mode="closed",
+            docs_path=self.docs_dir,
+        )
+
+        self.assertEqual(result["mode"], "closed")
+        self.assertEqual(result["writer"], "local")
+        self.assertTrue(len(result["sources"]) >= 1)
+        doc_source = result["sources"][0]
+        self.assertEqual(doc_source["kind"], "document")
+        self.assertEqual(doc_source["title"], "Network Policy")
+        self.assertEqual(doc_source["record_id"], "architecture.md#Network Policy")
+        self.assertEqual(
+            doc_source["excerpt"], "All network endpoints bind strictly to loopback addresses."
+        )
+        self.assertIsNone(doc_source["external_url"])
+        self.assertNotIn("http://", result["answer"])
+        self.assertNotIn("https://", result["answer"])
+
+        # LLM writer was called with tools=None
+        self.assertTrue(len(llm.calls) >= 1)
+        for call in llm.calls:
+            self.assertIsNone(call["tools"])
+
+    async def test_question_not_in_files_or_facts_produces_miss_gaps_and_no_writer(self) -> None:
+        db = FakeDB(facts=[])
+        palace = FakePalace()
+        llm = FakeLLM(rewrite_reply='["heirloom tomato gardening"]')
+
+        result = await run_research(
+            db,
+            palace,
+            llm,
+            question="How do I cultivate heirloom tomatoes?",
+            mode="closed",
+            docs_path=self.docs_dir,
+        )
+
+        self.assertEqual(result["sources"], [])
+        self.assertTrue(len(result["gaps"]) > 0)
+        self.assertIn("No relevant notes", result["answer"])
+        self.assertNotIn("http://", result["answer"])
+        self.assertNotIn("https://", result["answer"])
+
+        # Writer must NOT be called on zero sources
+        writer_calls = [
+            c
+            for c in llm.calls
+            if any("answer only from" in msg.get("content", "").lower() for msg in c["messages"])
+        ]
+        self.assertEqual(len(writer_calls), 0)
+
+    async def test_merges_and_deduplicates_document_and_fact_hits(self) -> None:
+        db = FakeDB(
+            facts=[{"id": 42, "content": "Mutiny runs locally as a single-process console."}]
+        )
+        palace = FakePalace()
+        llm = FakeLLM(
+            rewrite_reply='["single-process console"]',
+            writer_reply="The notes confirm Mutiny runs locally.",
+        )
+
+        result = await run_research(
+            db,
+            palace,
+            llm,
+            question="Tell me about the single-process console",
+            mode="closed",
+            docs_path=self.docs_dir,
+        )
+
+        kinds = {s["kind"] for s in result["sources"]}
+        self.assertIn("document", kinds)
+        self.assertIn("fact", kinds)
+        for s in result["sources"]:
+            self.assertIsNone(s["external_url"])
+
+    async def test_default_chat_unchanged(self) -> None:
+        from core.chat import send_message
+        from database.db import DatabaseManager
+
+        class FakeChatLLM:
+            def __init__(self):
+                self.calls = []
+
+            async def generate_response(self, model, messages, tools=None):
+                self.calls.append({"model": model, "messages": messages, "tools": tools})
+                return "Chat reply without tools."
+
+        db = DatabaseManager(":memory:")
+        await db.setup_database()
+        thread = await db.create_thread(title="Test thread")
+        llm = FakeChatLLM()
+        reply = await send_message(
+            db, llm, thread_id=thread["id"], content="Hello chat", request_id="r1"
+        )
+        self.assertEqual(
+            reply["assistant_message"]["content"], "Chat reply without tools."
+        )
+        self.assertEqual(len(llm.calls), 1)
+        self.assertIsNone(llm.calls[0]["tools"])
+        await db.close()
+
+
 if __name__ == "__main__":
     unittest.main()
+
