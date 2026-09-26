@@ -87,6 +87,83 @@ export function renderToolResult(section, run) {
   body.textContent = run.output || run.error_code || "";
 }
 
+export function renderResearchWorksheet(section, run, onSource) {
+  if (!run) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  const isFailed = run.status === "failed" || Boolean(run.error_code);
+  const args = run.arguments || {};
+
+  const metaEl = section.querySelector("#research-meta");
+  const model = args.model || "local model";
+  const writer = args.writer || "local";
+  const mode = args.mode || "closed";
+  const status = run.status || "complete";
+  metaEl.textContent = `${model} · writer: ${writer} · mode: ${mode} · status: ${status}`;
+
+  const qEl = section.querySelector("#research-question");
+  qEl.textContent = args.question || run.question || "";
+
+  const queriesList = section.querySelector("#research-queries");
+  queriesList.replaceChildren();
+  if (Array.isArray(args.queries) && args.queries.length) {
+    for (const q of args.queries) {
+      queriesList.append(el("li", "", q));
+    }
+  } else {
+    queriesList.append(el("li", "note", isFailed ? "(none)" : "(original question used)"));
+  }
+
+  const ansEl = section.querySelector("#research-answer");
+  ansEl.textContent = run.output || run.error_code || "(no answer)";
+
+  const gapsList = section.querySelector("#research-gaps");
+  gapsList.replaceChildren();
+  if (Array.isArray(args.gaps) && args.gaps.length) {
+    for (const g of args.gaps) {
+      gapsList.append(el("li", "", g));
+    }
+  } else {
+    gapsList.append(el("li", "note", isFailed ? "(failed)" : "No gaps reported."));
+  }
+
+  const sourcesHost = section.querySelector("#research-sources");
+  sourcesHost.replaceChildren();
+  if (!isFailed && Array.isArray(run.sources) && run.sources.length) {
+    sourcesHost.append(sourceRow(run.sources, onSource));
+  } else {
+    sourcesHost.append(el("p", "note", isFailed ? "No sources on failed run." : "No sources retrieved."));
+  }
+}
+
+export function formatResearchMarkdown(run) {
+  const args = run.arguments || {};
+  const question = args.question || run.question || "";
+  const queries = Array.isArray(args.queries) && args.queries.length
+    ? args.queries.map((q) => `- ${q}`).join("\n")
+    : "- (none)";
+  const answer = run.output || run.error_code || "(no answer)";
+  const gaps = Array.isArray(args.gaps) && args.gaps.length
+    ? args.gaps.map((g) => `- ${g}`).join("\n")
+    : "- (none)";
+  const sources = Array.isArray(run.sources) && run.sources.length
+    ? run.sources.map((s) => {
+        const idPart = s.record_id ? ` (record_id: ${s.record_id})` : "";
+        return `- [${s.title || s.kind || "Source"}] ${s.excerpt || ""}${idPart}`;
+      }).join("\n")
+    : "- (none)";
+
+  return [
+    `# Question\n${question}`,
+    `# Queries\n${queries}`,
+    `# Answer\n${answer}`,
+    `# Gaps\n${gaps}`,
+    `# Sources\n${sources}`,
+  ].join("\n\n");
+}
+
 function safeHttpUrl(value) {
   if (!value) return "";
   try {

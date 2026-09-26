@@ -45,6 +45,37 @@
         <pre id="tool-result-body"></pre>
         <div id="tool-result-sources" class="sources"></div>
       </section>
+      <section id="research-lab" class="tool-result research-lab" hidden>
+        <div class="worksheet-head">
+          <h3>Research worksheet</h3>
+          <div class="worksheet-actions">
+            <button type="button" id="research-copy">Copy markdown</button>
+            <button type="button" id="research-download">Download</button>
+            <button type="button" id="research-close">Close</button>
+          </div>
+        </div>
+        <p id="research-meta" class="meta"></p>
+        <div class="research-field">
+          <h4>Question</h4>
+          <p id="research-question"></p>
+        </div>
+        <div class="research-field">
+          <h4>Queries</h4>
+          <ul id="research-queries"></ul>
+        </div>
+        <div class="research-field">
+          <h4>Answer</h4>
+          <div id="research-answer" class="body"></div>
+        </div>
+        <div class="research-field">
+          <h4>Gaps</h4>
+          <ul id="research-gaps"></ul>
+        </div>
+        <div class="research-field">
+          <h4>Sources</h4>
+          <div id="research-sources" class="sources"></div>
+        </div>
+      </section>
       <form id="composer" class="composer">
         <label id="model-label" for="composer-input">Message</label>
         <textarea id="composer-input" rows="3" maxlength="32000" placeholder="Write a message"></textarea>
@@ -84,7 +115,10 @@
         <form id="ask-form">
           <label for="ask-question">Ask notes</label>
           <textarea id="ask-question" rows="3"></textarea>
-          <button type="submit">Ask</button>
+          <div class="form-actions">
+            <button type="submit">Ask</button>
+            <button type="button" id="research-notes">Research notes</button>
+          </div>
         </form>
       </section>
 

@@ -1,5 +1,5 @@
 import { ApiError, api, requestId } from "./api.js";
-import { renderMessages, renderThreads, renderToolResult, showSource, sourceRow } from "./conversation.js";
+import { formatResearchMarkdown, renderMessages, renderResearchWorksheet, renderThreads, renderToolResult, showSource, sourceRow } from "./conversation.js";
 import { fillModels, renderFacts, renderJobRuns, renderJobs, renderPrivacy } from "./panels.js";
 
 const shell = document.querySelector("#shell");
@@ -14,6 +14,7 @@ const state = {
   status: null,
   sending: false,
   confirm: "",
+  currentResearchRun: null,
 };
 
 const DRAWER_VIEWS = new Set(["settings", "memory", "jobs", "privacy"]);
@@ -159,6 +160,8 @@ async function runTool(name, arguments_) {
     method: "POST",
     json: { request_id: requestId(), arguments: arguments_ },
   });
+  const lab = document.querySelector("#research-lab");
+  if (lab) lab.hidden = true;
   const section = document.querySelector("#tool-result");
   renderToolResult(section, run);
   const host = section.querySelector("#tool-result-sources");
@@ -168,6 +171,66 @@ async function runTool(name, arguments_) {
   }
   if (window.matchMedia("(max-width: 899px)").matches) setView("chat");
   return run;
+}
+
+async function runResearch(question) {
+  const cleanQ = (question || "").trim();
+  if (!cleanQ) return;
+  setBanner("");
+  const button = document.querySelector("#research-notes");
+  if (button) button.disabled = true;
+  try {
+    const run = await api("/api/tools/research/runs", {
+      method: "POST",
+      json: {
+        request_id: requestId(),
+        arguments: { question: cleanQ, mode: "closed" },
+      },
+    });
+    state.currentResearchRun = run;
+    const toolSection = document.querySelector("#tool-result");
+    if (toolSection) toolSection.hidden = true;
+    const labSection = document.querySelector("#research-lab");
+    renderResearchWorksheet(labSection, run, (source) => {
+      showSource(document.querySelector("#source-dialog"), source);
+    });
+    if (window.matchMedia("(max-width: 899px)").matches) setView("chat");
+    return run;
+  } catch (error) {
+    showError(error);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function copyMarkdown(text, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_e) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+  if (button) {
+    const orig = button.textContent;
+    button.textContent = "Copied!";
+    setTimeout(() => { button.textContent = orig; }, 1500);
+  }
+}
+
+function downloadMarkdown(text, filename) {
+  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 async function loadJobs() {
@@ -271,6 +334,31 @@ document.querySelector("#ask-form").addEventListener("submit", (event) => {
   const arguments_ = { question, limit: 8 };
   if (state.threadId) arguments_.thread_id = state.threadId;
   runTool("ask_notes", arguments_).catch(showError);
+});
+
+document.querySelector("#research-notes").addEventListener("click", () => {
+  const question = document.querySelector("#ask-question").value.trim();
+  if (!question) {
+    document.querySelector("#ask-question").focus();
+    return;
+  }
+  runResearch(question).catch(showError);
+});
+
+document.querySelector("#research-copy").addEventListener("click", (event) => {
+  if (!state.currentResearchRun) return;
+  const md = formatResearchMarkdown(state.currentResearchRun);
+  copyMarkdown(md, event.target);
+});
+
+document.querySelector("#research-download").addEventListener("click", () => {
+  if (!state.currentResearchRun) return;
+  const md = formatResearchMarkdown(state.currentResearchRun);
+  downloadMarkdown(md, "research-run.md");
+});
+
+document.querySelector("#research-close").addEventListener("click", () => {
+  document.querySelector("#research-lab").hidden = true;
 });
 
 document.querySelector("#job-form").addEventListener("submit", (event) => {

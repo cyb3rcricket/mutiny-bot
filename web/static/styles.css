@@ -204,6 +204,58 @@ h1, h2, h3 {
   margin: 0.4rem 0;
 }
 
+.research-lab {
+  border-top: 1px solid #2c2f2b;
+  padding-top: 0.6rem;
+  max-height: 45vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.worksheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.worksheet-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.worksheet-actions button {
+  font-size: 0.82rem;
+  padding: 0.2rem 0.5rem;
+}
+
+.research-field h4 {
+  font-family: var(--sans);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0.2rem 0;
+}
+
+.research-field p, .research-field ul {
+  margin: 0.2rem 0;
+}
+
+.research-field ul {
+  padding-left: 1.2rem;
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
 .composer {
   display: grid;
   grid-template-columns: 1fr auto;
