@@ -10,9 +10,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from config import BIND_HOST, OUTBOUND_ENABLED, PORT
+from config import BIND_HOST, OUTBOUND_ENABLED, PORT, searxng_endpoint_error
 from core.chat import ChatConflict, ChatNotFound, send_message
-from core.research import run_research
+from core.research import ResearchError, run_research
 from core.tool_runner import MANUAL_TOOL_NAMES, ToolRejected, assert_manual_execution
 from database.db import InputTooLong
 from llm.llm_handler import LLMError
@@ -94,6 +94,7 @@ async def session(request: Request) -> JSONResponse:
 async def status(request: Request) -> dict[str, Any]:
     services = _state(request)
     palace = services.palace
+    searxng_ok = searxng_endpoint_error() is None
     return {
         "bind_host": BIND_HOST,
         "port": PORT,
@@ -103,7 +104,8 @@ async def status(request: Request) -> dict[str, Any]:
         "memory_degraded_reason": palace.degraded_reason,
         "scheduler_available": services.scheduler.available,
         "outbound_enabled": bool(OUTBOUND_ENABLED),
-        "outbound_features": [],
+        "searxng_configured": searxng_ok,
+        "outbound_features": ["research_web"] if (OUTBOUND_ENABLED and searxng_ok) else [],
         "dangerous_tools_enabled": False,
     }
 
@@ -312,7 +314,10 @@ async def list_tools() -> dict[str, Any]:
         },
         {
             "name": "research",
-            "description": "Execute closed-corpus research over local facts and memories",
+            "description": (
+                "Execute closed research by default, or gated web research when "
+                "MUTINY_OUTBOUND_ENABLED=1 and mode=web"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -322,7 +327,7 @@ async def list_tools() -> dict[str, Any]:
                 },
                 "required": ["question"],
             },
-            "network": False,
+            "network": True,
             "schedulable": False,
             "mutation": False,
         },
@@ -507,9 +512,16 @@ async def _execute_manual(services: Any, name: str, arguments: dict[str, Any]) -
         if not question:
             return "A question is required.", [], "invalid_arguments", None
         mode = str(arguments.get("mode") or "closed").strip()
-        if mode != "closed":
+        if mode == "wiki":
             return (
-                f"Research mode '{mode}' is not implemented (wiki/web not implemented). Mutiny research currently supports 'closed' mode only.",
+                "Research mode 'wiki' is not implemented. Mutiny research currently supports 'closed' and 'web' modes only.",
+                [],
+                "unsupported_mode",
+                None,
+            )
+        if mode not in {"closed", "web"}:
+            return (
+                f"Research mode '{mode}' is not implemented. Mutiny research currently supports 'closed' and 'web' modes only.",
                 [],
                 "unsupported_mode",
                 None,
@@ -518,14 +530,27 @@ async def _execute_manual(services: Any, name: str, arguments: dict[str, Any]) -
             limit = int(arguments.get("limit") or 8)
         except (ValueError, TypeError):
             limit = 8
-        result = await run_research(
-            services.db,
-            services.palace,
-            services.llm,
-            question=question,
-            mode=mode,
-            limit=limit,
-        )
+        try:
+            result = await run_research(
+                services.db,
+                services.palace,
+                services.llm,
+                question=question,
+                mode=mode,
+                limit=limit,
+            )
+        except ResearchError as exc:
+            model_name = await services.db.get_current_model()
+            arguments_payload = {
+                "question": question,
+                "mode": mode,
+                "queries": [],
+                "gaps": ["not in retrieved notes"],
+                "model": model_name,
+                "writer": "local",
+            }
+            return exc.message, [], exc.code, arguments_payload
+
         arguments_payload = {
             "question": result["question"],
             "mode": result["mode"],

@@ -707,10 +707,12 @@ class DatabaseManager:
         run_id: str | None = None,
         title: str | None = None,
         record_id: str | None = None,
+        retrieved_at: str | None = None,
         external_url: str | None = None,
+        **_extra: Any,
     ) -> dict[str, Any]:
         source_id = uuid.uuid4().hex
-        now = utc_now()
+        now = retrieved_at or utc_now()
         async with self.transaction() as db:
             await db.execute(
                 """

@@ -83,6 +83,20 @@ def bind_host_error(host: str = BIND_HOST) -> str | None:
     return None
 
 
+SEARXNG_URL = os.getenv("MUTINY_SEARXNG_URL", "http://127.0.0.1:8080").strip() or "http://127.0.0.1:8080"
+
+
+def searxng_endpoint_error(url: str | None = None) -> str | None:
+    """Return an error when the SearxNG URL is not a loopback HTTP endpoint."""
+    target = (url if url is not None else SEARXNG_URL).strip()
+    parsed = urlparse(target)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return "MUTINY_SEARXNG_URL must be an http or https URL."
+    if not is_loopback_host(parsed.hostname):
+        return "MUTINY_SEARXNG_URL must point at a loopback address."
+    return None
+
+
 def validate_startup_config() -> tuple[list[str], list[str]]:
     """Return loopback and Ollama problems. There is no messenger credential."""
     errors: list[str] = []

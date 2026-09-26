@@ -82,6 +82,9 @@ Research is an existing separate action in the Memory panel, also available at `
 - Any later web retrieval requires an explicit opt-in (outbound flag and Research mode). It does not become the default path.
 - A Research answer may only use excerpts attached to that run. If the corpus does not contain the fact, the run reports a gap instead of guessing.
 
+### Research web mode (Phase 7)
+Web research is gated behind two locks: `MUTINY_OUTBOUND_ENABLED=1` in the environment and explicit `mode="web"` on that research run. Default Send stays local chat with `tools=None` and still cannot browse. When enabled, Mutiny queries only a local loopback SearxNG instance for snippets (no direct Google/Bing egress, no full-page crawls, no cloud writer). Citations in web mode may only retain URLs retrieved as sources for that turn; all other URLs are stripped.
+
 ## What you can do
 
 - **Threaded chat**: Manage distinct conversation threads. Conversation history, the selected model, and the configured system personality survive process restarts.

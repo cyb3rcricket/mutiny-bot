@@ -120,6 +120,18 @@ async function loadSettings() {
   document.querySelector("#job-zone").value = settings.automation_timezone || "UTC";
   const label = settings.model ? `Message · ${settings.model}` : "Message · no model selected";
   document.querySelector("#model-label").textContent = label;
+  const webBtn = document.querySelector("#research-web");
+  if (webBtn) {
+    if (status.outbound_enabled) {
+      webBtn.hidden = false;
+      webBtn.disabled = false;
+      webBtn.title = "";
+    } else {
+      webBtn.hidden = true;
+      webBtn.disabled = true;
+      webBtn.title = "Outbound is off";
+    }
+  }
   renderPrivacy(document.querySelector("#privacy-list"), status);
 }
 
@@ -173,18 +185,20 @@ async function runTool(name, arguments_) {
   return run;
 }
 
-async function runResearch(question) {
+async function runResearch(question, mode = "closed") {
   const cleanQ = (question || "").trim();
   if (!cleanQ) return;
   setBanner("");
   const button = document.querySelector("#research-notes");
+  const webButton = document.querySelector("#research-web");
   if (button) button.disabled = true;
+  if (webButton) webButton.disabled = true;
   try {
     const run = await api("/api/tools/research/runs", {
       method: "POST",
       json: {
         request_id: requestId(),
-        arguments: { question: cleanQ, mode: "closed" },
+        arguments: mode === "web" ? { question: cleanQ, mode: "web" } : { question: cleanQ, mode: "closed" },
       },
     });
     state.currentResearchRun = run;
@@ -200,6 +214,7 @@ async function runResearch(question) {
     showError(error);
   } finally {
     if (button) button.disabled = false;
+    if (webButton && state.status?.outbound_enabled) webButton.disabled = false;
   }
 }
 
@@ -342,8 +357,20 @@ document.querySelector("#research-notes").addEventListener("click", () => {
     document.querySelector("#ask-question").focus();
     return;
   }
-  runResearch(question).catch(showError);
+  runResearch(question, "closed").catch(showError);
 });
+
+const researchWebBtn = document.querySelector("#research-web");
+if (researchWebBtn) {
+  researchWebBtn.addEventListener("click", () => {
+    const question = document.querySelector("#ask-question").value.trim();
+    if (!question) {
+      document.querySelector("#ask-question").focus();
+      return;
+    }
+    runResearch(question, "web").catch(showError);
+  });
+}
 
 document.querySelector("#research-copy").addEventListener("click", (event) => {
   if (!state.currentResearchRun) return;

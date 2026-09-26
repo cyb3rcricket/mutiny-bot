@@ -1,11 +1,16 @@
+import logging
+import os
 from pathlib import Path
 import tempfile
 from typing import Any
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
+import httpx
+
+import config
 import core.research as research_module
-from core.research import _parse_rewrite_queries, run_research
+from core.research import ResearchError, _parse_rewrite_queries, run_research, search_web
 from memory.palace import MemoryHit
 
 
@@ -172,13 +177,16 @@ class ResearchPipelineTests(unittest.IsolatedAsyncioTestCase):
         palace = FakePalace()
         llm = FakeLLM()
 
-        with self.assertRaises(ValueError) as ctx_web:
-            await run_research(db, palace, llm, question="test", mode="web")
-        self.assertIn("closed", str(ctx_web.exception).lower())
+        # Web mode with outbound off errors with outbound_disabled
+        with patch.object(config, "OUTBOUND_ENABLED", False):
+            with self.assertRaises(ValueError) as ctx_web:
+                await run_research(db, palace, llm, question="test", mode="web")
+        self.assertIn("outbound_disabled", str(ctx_web.exception).lower())
 
+        # Wiki mode is still refused
         with self.assertRaises(ValueError) as ctx_wiki:
             await run_research(db, palace, llm, question="test", mode="wiki")
-        self.assertIn("closed", str(ctx_wiki.exception).lower())
+        self.assertIn("wiki", str(ctx_wiki.exception).lower())
 
         with self.assertRaises(ValueError):
             await run_research(db, palace, llm, question="test", mode="invalid_mode")
@@ -561,6 +569,495 @@ class LocalDocumentResearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(llm.calls), 1)
         self.assertIsNone(llm.calls[0]["tools"])
         await db.close()
+
+    async def test_web_mode_outbound_off_raises_error_zero_network(self) -> None:
+        db = FakeDB()
+        palace = FakePalace()
+        llm = FakeLLM()
+
+        with patch.object(config, "OUTBOUND_ENABLED", False):
+            with self.assertRaises(ResearchError) as ctx:
+                await run_research(db, palace, llm, question="what is mutiny", mode="web")
+            self.assertEqual(ctx.exception.code, "outbound_disabled")
+            self.assertEqual(len(llm.calls), 0)
+
+    async def test_closed_mode_with_outbound_on_does_not_call_searxng(self) -> None:
+        db = FakeDB(facts=[{"id": 1, "content": "Mutiny runs locally."}])
+        palace = FakePalace()
+        llm = FakeLLM(
+            rewrite_reply='["Mutiny"]',
+            writer_reply="Mutiny runs locally [1].",
+        )
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch("core.research.search_web", new=AsyncMock()) as mock_search:
+                result = await run_research(db, palace, llm, question="what is mutiny", mode="closed")
+                mock_search.assert_not_called()
+                self.assertEqual(result["mode"], "closed")
+                self.assertEqual(result["sources"][0]["kind"], "fact")
+                self.assertIsNone(result["sources"][0]["external_url"])
+
+    async def test_web_mode_mocked_searxng_hits(self) -> None:
+        db = FakeDB(facts=[{"id": 99, "content": "Should not be retrieved in web mode"}])
+        palace = FakePalace()
+        llm = FakeLLM(
+            rewrite_reply='["mutiny local console"]',
+            writer_reply="Mutiny is a console [1]. See https://mutiny.example/about.",
+        )
+
+        hits_response = {
+            "results": [
+                {
+                    "title": "Mutiny Console",
+                    "url": "https://mutiny.example/about",
+                    "content": "Mutiny is an open local-first AI console.",
+                },
+                {
+                    "title": "Duplicate URL",
+                    "url": "https://mutiny.example/about",
+                    "content": "Duplicate snippet.",
+                },
+                {
+                    "title": "Malicious non-http scheme",
+                    "url": "javascript:alert(1)",
+                    "content": "Bad script.",
+                },
+                {
+                    "title": "Mutiny Docs",
+                    "url": "https://mutiny.example/docs",
+                    "content": "Documentation for local models.",
+                },
+            ]
+        }
+
+        async def mock_handler(request: httpx.Request) -> httpx.Response:
+            self.assertIn("/search", str(request.url))
+            self.assertIn("format=json", str(request.url))
+            return httpx.Response(200, json=hits_response, request=request)
+
+        transport = httpx.MockTransport(mock_handler)
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
+                result = await run_research(
+                    db, palace, llm, question="what is mutiny", mode="web"
+                )
+
+        self.assertEqual(result["mode"], "web")
+        self.assertEqual(result["writer"], "local")
+        self.assertEqual(result["queries"], ["mutiny local console"])
+        self.assertEqual(result["gaps"], [])
+        self.assertEqual(len(result["sources"]), 2)
+        urls = [s["external_url"] for s in result["sources"]]
+        self.assertEqual(urls, ["https://mutiny.example/about", "https://mutiny.example/docs"])
+        for s in result["sources"]:
+            self.assertEqual(s["kind"], "web")
+            self.assertEqual(s["record_id"], s["external_url"])
+            self.assertIn("T", s["retrieved_at"])
+            self.assertTrue(s["excerpt"])
+
+        self.assertIn("https://mutiny.example/about", result["answer"])
+        self.assertIn("[1]", result["answer"])
+
+        writer_call = [
+            c for c in llm.calls if any("answer only from" in m.get("content", "").lower() for m in c["messages"])
+        ][0]
+        self.assertIsNone(writer_call["tools"])
+
+    async def test_web_mode_reports_only_queries_sent_until_limit(self) -> None:
+        db = FakeDB()
+        palace = FakePalace()
+        llm = FakeLLM(
+            rewrite_reply='["first phrase", "second phrase", "third phrase"]',
+            writer_reply="The first result is relevant [1].",
+        )
+        requested_queries: list[str] = []
+
+        async def mock_handler(request: httpx.Request) -> httpx.Response:
+            requested_queries.append(request.url.params["q"])
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "title": "First result",
+                            "url": "https://mutiny.example/first",
+                            "content": "The first result is relevant.",
+                        }
+                    ]
+                },
+                request=request,
+            )
+
+        transport = httpx.MockTransport(mock_handler)
+        real_async_client = httpx.AsyncClient
+
+        def client_factory(**kwargs: Any) -> httpx.AsyncClient:
+            return real_async_client(transport=transport, trust_env=False)
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch.object(research_module.httpx, "AsyncClient", side_effect=client_factory):
+                result = await run_research(
+                    db,
+                    palace,
+                    llm,
+                    question="what is mutiny",
+                    mode="web",
+                    limit=1,
+                )
+
+        self.assertEqual(requested_queries, ["first phrase"])
+        self.assertEqual(result["queries"], ["first phrase"])
+
+    async def test_search_web_disables_proxy_environment_and_redacts_query_logs(self) -> None:
+        response_hits = {
+            "results": [
+                {
+                    "title": "Searx result",
+                    "url": "https://mutiny.example/result",
+                    "content": "A result.",
+                }
+            ]
+        }
+
+        real_async_client = httpx.AsyncClient
+        client_kwargs: dict[str, Any] = {}
+        selected_transport_types: list[tuple[str, str]] = []
+
+        def client_factory(**kwargs: Any) -> httpx.AsyncClient:
+            client_kwargs.update(kwargs)
+            client = real_async_client(**kwargs)
+            selected = client._transport_for_url(
+                httpx.URL("http://127.0.0.1:8080/searx/search?q=path+prefixed")
+            )
+            selected_transport_types.append(
+                (type(selected._pool).__name__, type(client._transport._pool).__name__)
+            )
+            response = httpx.Response(
+                200,
+                json=response_hits,
+                request=httpx.Request("GET", "http://127.0.0.1:8080/searx/search"),
+            )
+
+            async def fake_get(url: str, **request_kwargs: Any) -> httpx.Response:
+                httpx_logger.info(
+                    "HTTP Request: GET %s?q=path+prefixed+secret+phrase&format=json",
+                    url,
+                )
+                httpx_logger.info("HTTP Request: GET http://127.0.0.1:8080/health")
+                return response
+
+            client.get = AsyncMock(side_effect=fake_get)
+            return client
+
+        class CaptureHandler(logging.Handler):
+            def __init__(self) -> None:
+                super().__init__()
+                self.messages: list[str] = []
+
+            def emit(self, record: logging.LogRecord) -> None:
+                self.messages.append(record.getMessage())
+
+        httpx_logger = logging.getLogger("httpx")
+        capture = CaptureHandler()
+        previous_level = httpx_logger.level
+        httpx_logger.setLevel(logging.INFO)
+        httpx_logger.addHandler(capture)
+        try:
+            with patch.dict(
+                os.environ,
+                {
+                    "HTTP_PROXY": "http://proxy.invalid:3128",
+                    "HTTPS_PROXY": "http://proxy.invalid:3128",
+                    "ALL_PROXY": "http://proxy.invalid:3128",
+                    "NO_PROXY": "",
+                    "no_proxy": "",
+                },
+                clear=False,
+            ):
+                with patch.object(config, "OUTBOUND_ENABLED", True):
+                    with patch.object(research_module.httpx, "AsyncClient", side_effect=client_factory):
+                        result = await search_web(
+                            ["path prefixed secret phrase"],
+                            searxng_url="http://user:pass@127.0.0.1:8080/searx",
+                        )
+        finally:
+            httpx_logger.removeHandler(capture)
+            httpx_logger.setLevel(previous_level)
+
+        self.assertEqual(len(result), 1)
+        self.assertFalse(client_kwargs["trust_env"])
+        self.assertIsNone(client_kwargs["proxy"])
+        self.assertEqual(selected_transport_types, [("AsyncConnectionPool", "AsyncConnectionPool")])
+        self.assertIn("health", "\n".join(capture.messages))
+        self.assertTrue(all("secret phrase" not in message for message in capture.messages))
+        self.assertTrue(all("?q=" not in message for message in capture.messages))
+
+    async def test_search_web_http_error_does_not_expose_query_in_logs_or_error(self) -> None:
+        async def fail_handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(503, json={"error": "down"}, request=request)
+
+        transport = httpx.MockTransport(fail_handler)
+        capture_messages: list[str] = []
+
+        class CaptureHandler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                capture_messages.append(record.getMessage())
+
+        capture = CaptureHandler()
+        research_logger = research_module.logger
+        httpx_logger = logging.getLogger("httpx")
+        previous_levels = (research_logger.level, httpx_logger.level)
+        research_logger.setLevel(logging.WARNING)
+        httpx_logger.setLevel(logging.INFO)
+        research_logger.addHandler(capture)
+        httpx_logger.addHandler(capture)
+        try:
+            with patch.object(config, "OUTBOUND_ENABLED", True):
+                with patch.object(
+                    research_module.httpx,
+                    "AsyncClient",
+                    return_value=httpx.AsyncClient(transport=transport),
+                ):
+                    with self.assertRaises(ResearchError) as ctx:
+                        await search_web(["raw secret"], searxng_url="http://127.0.0.1:8080/searx")
+        finally:
+            research_logger.removeHandler(capture)
+            httpx_logger.removeHandler(capture)
+            research_logger.setLevel(previous_levels[0])
+            httpx_logger.setLevel(previous_levels[1])
+
+        self.assertEqual(ctx.exception.code, "searxng_unavailable")
+        self.assertEqual(str(ctx.exception), "searxng_unavailable: SearxNG search failed.")
+        combined_logs = "\n".join(capture_messages)
+        self.assertIn("HTTPStatusError", combined_logs)
+        for leaked in ("?q=", "raw secret", "raw+secret", "raw%20secret"):
+            self.assertNotIn(leaked, str(ctx.exception))
+            self.assertNotIn(leaked, combined_logs)
+
+    async def test_search_web_discards_invalid_and_empty_results_and_caps_snippets(self) -> None:
+        long_snippet = "Useful result. " + ("x" * 2500)
+        response_hits = {
+            "results": [
+                {
+                    "title": "  ",
+                    "url": "https://mutiny.example/valid",
+                    "content": "Useful result.",
+                },
+                {
+                    "title": "Empty",
+                    "url": "https://mutiny.example/empty",
+                    "content": "   \n",
+                },
+                {
+                    "title": "Long",
+                    "url": "https://mutiny.example/long",
+                    "content": long_snippet,
+                },
+                {
+                    "title": "Script",
+                    "url": "javascript:alert(1)",
+                    "content": "Do not keep.",
+                },
+                {
+                    "title": "Protocol relative",
+                    "url": "//mutiny.example/relative",
+                    "content": "Do not keep.",
+                },
+                {
+                    "title": "Malformed",
+                    "url": "http://",
+                    "content": "Do not keep.",
+                },
+            ]
+        }
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json=response_hits, request=request)
+        )
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch.object(
+                research_module.httpx,
+                "AsyncClient",
+                return_value=httpx.AsyncClient(transport=transport),
+            ):
+                result = await search_web(["mixed results"])
+
+        self.assertEqual(
+            [source["external_url"] for source in result],
+            ["https://mutiny.example/valid", "https://mutiny.example/long"],
+        )
+        self.assertEqual(result[0]["title"], "https://mutiny.example/valid")
+        self.assertEqual(len(result[1]["excerpt"]), 2000)
+
+    async def test_web_mode_all_empty_results_skips_writer(self) -> None:
+        db = FakeDB()
+        palace = FakePalace()
+        llm = FakeLLM(rewrite_reply='["empty topic"]')
+        response_hits = {
+            "results": [
+                {"url": "https://mutiny.example/empty", "content": "  "},
+                {"url": "javascript:alert(1)", "content": "not a source"},
+            ]
+        }
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json=response_hits, request=request)
+        )
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch.object(
+                research_module.httpx,
+                "AsyncClient",
+                return_value=httpx.AsyncClient(transport=transport),
+            ):
+                result = await run_research(
+                    db, palace, llm, question="empty topic", mode="web"
+                )
+
+        self.assertEqual(result["sources"], [])
+        self.assertEqual(result["gaps"], ["not in retrieved notes"])
+        writer_calls = [
+            call
+            for call in llm.calls
+            if any("answer only from" in m.get("content", "").lower() for m in call["messages"])
+        ]
+        self.assertEqual(writer_calls, [])
+
+    async def test_web_mode_sanitizer_removes_unapproved_urls_and_invalid_citations(self) -> None:
+        db = FakeDB()
+        palace = FakePalace()
+        llm = FakeLLM(
+            rewrite_reply='["mutiny"]',
+            writer_reply=(
+                "Mutiny is local [1]. "
+                "Visit https://mutiny.example/about and "
+                "https://mutiny.example/path_(official) [2]. "
+                "Also check (https://evil.example/lookalike), "
+                "[escaped](https://evil.example/a\\(b\\)), //evil.example/raw, "
+                "javascript:alert(1), ftp://evil.example/file, "
+                "[relative](/not-allowed), and [evil link](https://evil.example). "
+                "Invalid references [0] [-1] [99]."
+            ),
+        )
+
+        hits_response = {
+            "results": [
+                {
+                    "title": "Mutiny",
+                    "url": "https://mutiny.example/about",
+                    "content": "Mutiny is local.",
+                },
+                {
+                    "title": "Official path",
+                    "url": "https://mutiny.example/path_(official)",
+                    "content": "The official path is available.",
+                }
+            ]
+        }
+
+        transport = httpx.MockTransport(lambda req: httpx.Response(200, json=hits_response, request=req))
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
+                result = await run_research(db, palace, llm, question="what is mutiny", mode="web")
+
+        self.assertIn("https://mutiny.example/about", result["answer"])
+        self.assertIn("https://mutiny.example/path_(official)", result["answer"])
+        self.assertNotIn("evil.example", result["answer"])
+        self.assertNotIn("javascript:", result["answer"])
+        self.assertNotIn("ftp://", result["answer"])
+        self.assertNotIn("//evil.example", result["answer"])
+        self.assertNotIn("/not-allowed", result["answer"])
+        self.assertIn("[1]", result["answer"])
+        self.assertIn("[2]", result["answer"])
+        self.assertNotIn("[0]", result["answer"])
+        self.assertNotIn("[-1]", result["answer"])
+        self.assertNotIn("[99]", result["answer"])
+
+        angle_wrapped = research_module._sanitize_web_answer(
+            "[source](<https://mutiny.example/path_(official)>)",
+            result["sources"],
+        )
+        self.assertIn("https://mutiny.example/path_(official)", angle_wrapped)
+        escaped_allowed = research_module._sanitize_web_answer(
+            r"[source](https://mutiny.example/path_\(official\))",
+            result["sources"],
+        )
+        self.assertIn("https://mutiny.example/path_(official)", escaped_allowed)
+
+        prefix_lookalike = research_module._sanitize_web_answer(
+            r"[https://allowed.example/page(evil)](https://allowed.example/page\(evil\)) "
+            r"raw https://allowed.example/page(evil) and valid https://allowed.example/page",
+            [{"external_url": "https://allowed.example/page"}],
+        )
+        self.assertIn("https://allowed.example/page", prefix_lookalike)
+        self.assertNotIn("https://allowed.example/page(evil)", prefix_lookalike)
+        self.assertNotIn("https://allowed.example/page\\(evil\\)", prefix_lookalike)
+
+    async def test_web_mode_searxng_down_fails_without_fake_article(self) -> None:
+        db = FakeDB()
+        palace = FakePalace()
+        llm = FakeLLM(rewrite_reply='["mutiny"]')
+
+        async def fail_handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("Connection refused to SearxNG")
+
+        transport = httpx.MockTransport(fail_handler)
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
+                with self.assertRaises(ResearchError) as ctx:
+                    await run_research(db, palace, llm, question="what is mutiny", mode="web")
+                self.assertEqual(ctx.exception.code, "searxng_unavailable")
+
+        writer_calls = [
+            c for c in llm.calls if any("answer only from" in m.get("content", "").lower() for m in c["messages"])
+        ]
+        self.assertEqual(len(writer_calls), 0)
+
+    async def test_web_mode_zero_hits_returns_gaps_and_skips_writer(self) -> None:
+        db = FakeDB()
+        palace = FakePalace()
+        llm = FakeLLM(rewrite_reply='["obscure topic"]')
+
+        transport = httpx.MockTransport(lambda req: httpx.Response(200, json={"results": []}, request=req))
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch("httpx.AsyncClient", return_value=httpx.AsyncClient(transport=transport)):
+                result = await run_research(db, palace, llm, question="obscure query", mode="web")
+
+        self.assertEqual(result["sources"], [])
+        self.assertEqual(result["gaps"], ["not in retrieved notes"])
+        self.assertIn("No relevant web snippets", result["answer"])
+        self.assertNotIn("http://", result["answer"])
+        self.assertNotIn("https://", result["answer"])
+
+        writer_calls = [
+            c for c in llm.calls if any("answer only from" in m.get("content", "").lower() for m in c["messages"])
+        ]
+        self.assertEqual(len(writer_calls), 0)
+
+    async def test_web_mode_non_loopback_url_rejected(self) -> None:
+        db = FakeDB()
+        palace = FakePalace()
+        llm = FakeLLM()
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch.object(config, "SEARXNG_URL", "http://external-searxng.org:8080"):
+                with self.assertRaises(ResearchError) as ctx:
+                    await run_research(db, palace, llm, question="test", mode="web")
+                self.assertEqual(ctx.exception.code, "invalid_searxng_url")
+
+    async def test_search_web_direct_guards(self) -> None:
+        with patch.object(config, "OUTBOUND_ENABLED", False):
+            with self.assertRaises(ResearchError) as ctx:
+                await search_web(["test"], mode="web")
+            self.assertEqual(ctx.exception.code, "outbound_disabled")
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with self.assertRaises(ResearchError) as ctx:
+                await search_web(["test"], mode="closed")
+            self.assertEqual(ctx.exception.code, "invalid_mode")
 
 
 if __name__ == "__main__":

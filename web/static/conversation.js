@@ -50,8 +50,13 @@ export function renderMessages(transcript, messages, onSource) {
 export function sourceRow(sources, onSource) {
   const row = el("div", "sources");
   sources.forEach((source, index) => {
-    const chip = el("button", "btn btn-sm btn-outline-secondary", source.title || source.kind || "Source");
+    let label = source.title || source.kind || "Source";
+    if (source.external_url) {
+      label = source.title ? `${source.title} (${source.external_url})` : source.external_url;
+    }
+    const chip = el("button", "btn btn-sm btn-outline-secondary", label);
     chip.type = "button";
+    if (source.external_url) chip.title = source.external_url;
     chip.addEventListener("click", () => onSource(source, index));
     row.append(chip);
   });
@@ -150,8 +155,9 @@ export function formatResearchMarkdown(run) {
     : "- (none)";
   const sources = Array.isArray(run.sources) && run.sources.length
     ? run.sources.map((s) => {
-        const idPart = s.record_id ? ` (record_id: ${s.record_id})` : "";
-        return `- [${s.title || s.kind || "Source"}] ${s.excerpt || ""}${idPart}`;
+        const urlPart = s.external_url ? ` (url: ${s.external_url})` : "";
+        const idPart = s.record_id && !s.external_url ? ` (record_id: ${s.record_id})` : "";
+        return `- [${s.title || s.kind || "Source"}] ${s.excerpt || ""}${urlPart}${idPart}`;
       }).join("\n")
     : "- (none)";
 

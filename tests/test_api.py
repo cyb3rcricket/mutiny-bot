@@ -8,7 +8,9 @@ from unittest.mock import AsyncMock, patch
 
 from starlette.testclient import TestClient
 
+import config
 from core.chat import ChatConflict, send_message
+from core.research import ResearchError
 from database.db import DatabaseManager, InputTooLong
 from llm.llm_handler import LLMError
 from web.app import create_app
@@ -211,7 +213,10 @@ class LocalApiTests(unittest.TestCase):
         self.assertTrue(paused.json()["paused"])
         removed = self.client.delete(f"/api/jobs/{job_id}", headers=self.mutation)
         self.assertEqual(removed.status_code, 204)
-        status = self.client.get("/api/status")
+        with patch.object(config, "OUTBOUND_ENABLED", False):
+            with patch.object(config, "SEARXNG_URL", "http://127.0.0.1:8080"):
+                with patch("web.routes.api.OUTBOUND_ENABLED", False):
+                    status = self.client.get("/api/status")
         self.assertFalse(status.json()["dangerous_tools_enabled"])
         self.assertFalse(status.json()["outbound_enabled"])
         self.assertIn("127.0.0.1", status.json()["ollama_target"])
@@ -239,7 +244,9 @@ class LocalApiTests(unittest.TestCase):
         tools_list = self.client.get("/api/tools").json()["tools"]
         research_tool = next((t for t in tools_list if t["name"] == "research"), None)
         self.assertIsNotNone(research_tool)
-        self.assertFalse(research_tool["network"])
+        self.assertTrue(research_tool["network"])
+        self.assertIn("MUTINY_OUTBOUND_ENABLED=1", research_tool["description"])
+        self.assertIn("mode=web", research_tool["description"])
         self.assertFalse(research_tool["schedulable"])
         self.assertIn("question", research_tool["parameters"]["required"])
 
@@ -297,19 +304,22 @@ class LocalApiTests(unittest.TestCase):
         self.assertEqual(again.json()["id"], data["id"])
 
         # 6. mode="web" and mode="wiki" fail closed (status=failed, no sources, no egress)
-        web_res = self.client.post(
-            "/api/tools/research/runs",
-            headers=self.mutation,
-            json={
-                "request_id": "run-web-1",
-                "arguments": {"question": "What is Mutiny?", "mode": "web"},
-            },
-        )
+        with patch.object(config, "OUTBOUND_ENABLED", False):
+            with patch("web.routes.api.OUTBOUND_ENABLED", False):
+                web_res = self.client.post(
+                    "/api/tools/research/runs",
+                    headers=self.mutation,
+                    json={
+                        "request_id": "run-web-1",
+                        "arguments": {"question": "What is Mutiny?", "mode": "web"},
+                    },
+                )
         self.assertEqual(web_res.status_code, 200, web_res.text)
         web_data = web_res.json()
         self.assertEqual(web_data["status"], "failed")
         self.assertEqual(web_data["sources"], [])
-        self.assertIn("not implemented", web_data["output"].lower())
+        self.assertEqual(web_data["error_code"], "outbound_disabled")
+        self.assertIn("outbound", web_data["output"].lower())
 
         wiki_res = self.client.post(
             "/api/tools/research/runs",
@@ -500,6 +510,75 @@ class LocalApiTests(unittest.TestCase):
         status, error_code, output = self._run_row("run-source-failure-1")
         self.assertEqual((status, error_code), ("failed", "source_persistence_failed"))
         self.assertEqual(output, "The notes say Mutiny is local.")
+
+    def test_research_api_web_mode_outbound_on_success(self) -> None:
+        self.llm.rewrite_reply = '["mutiny console"]'
+        self.llm.reply = "Mutiny is an open-source console [1]."
+
+        mock_sources = [
+            {
+                "kind": "web",
+                "title": "Mutiny Console",
+                "excerpt": "Mutiny is an open-source console.",
+                "record_id": "https://mutiny.example/info",
+                "external_url": "https://mutiny.example/info",
+                "retrieved_at": "2026-09-26T12:00:00Z",
+            }
+        ]
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch("core.research.search_web", new=AsyncMock(return_value=mock_sources)):
+                res = self.client.post(
+                    "/api/tools/research/runs",
+                    headers=self.mutation,
+                    json={
+                        "request_id": "run-web-success-1",
+                        "arguments": {"question": "What is Mutiny?", "mode": "web"},
+                    },
+                )
+
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "complete")
+        self.assertEqual(data["arguments"]["mode"], "web")
+        self.assertEqual(len(data["sources"]), 1)
+        self.assertEqual(data["sources"][0]["kind"], "web")
+        self.assertEqual(data["sources"][0]["external_url"], "https://mutiny.example/info")
+
+    def test_research_api_web_mode_searxng_down_fails_cleanly(self) -> None:
+        self.llm.rewrite_reply = '["mutiny"]'
+
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch(
+                "core.research.search_web",
+                new=AsyncMock(side_effect=ResearchError("searxng_unavailable", "SearxNG is unreachable")),
+            ):
+                res = self.client.post(
+                    "/api/tools/research/runs",
+                    headers=self.mutation,
+                    json={
+                        "request_id": "run-web-fail-1",
+                        "arguments": {"question": "What is Mutiny?", "mode": "web"},
+                    },
+                )
+
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "failed")
+        self.assertEqual(data["error_code"], "searxng_unavailable")
+        self.assertEqual(data["sources"], [])
+        self.assertEqual(self._run_row("run-web-fail-1")[0:2], ("failed", "searxng_unavailable"))
+
+    def test_api_status_searxng_configured_and_outbound_gating(self) -> None:
+        with patch.object(config, "OUTBOUND_ENABLED", False):
+            with patch.object(config, "SEARXNG_URL", "http://127.0.0.1:8080"):
+                with patch("web.routes.api.OUTBOUND_ENABLED", False):
+                    status_res = self.client.get("/api/status")
+        self.assertEqual(status_res.status_code, 200)
+        status_data = status_res.json()
+        self.assertTrue(status_data["searxng_configured"])
+        self.assertFalse(status_data["outbound_enabled"])
+        self.assertNotIn("research_web", status_data["outbound_features"])
 
 
 class ChatConflictTests(unittest.IsolatedAsyncioTestCase):
