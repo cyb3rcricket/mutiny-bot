@@ -45,6 +45,46 @@ function showError(error) {
   setBanner(message);
 }
 
+function localComposerLabel() {
+  return state.settings?.model ? `Message · ${state.settings.model}` : "Message · no model selected";
+}
+
+function updateComposerMode() {
+  const input = document.querySelector("#composer-input");
+  const toggle = document.querySelector("#web-search-toggle");
+  const switchLabel = toggle?.closest(".composer-switch");
+  const modelLabel = document.querySelector("#model-label");
+  const send = document.querySelector("#send");
+  if (!input || !toggle || !modelLabel || !send) return;
+
+  const webAvailable = Boolean(state.status?.outbound_enabled);
+  if (!webAvailable) {
+    toggle.checked = false;
+    toggle.hidden = true;
+    toggle.disabled = true;
+    if (switchLabel) switchLabel.hidden = true;
+  } else {
+    toggle.hidden = false;
+    toggle.disabled = state.sending;
+    if (switchLabel) switchLabel.hidden = false;
+  }
+
+  const webMode = webAvailable && toggle.checked;
+  modelLabel.textContent = webMode ? "Search the web" : localComposerLabel();
+  input.placeholder = webMode ? "Search the web" : "Write a message";
+  send.textContent = webMode ? "Search" : "Send";
+  send.disabled = state.sending;
+}
+
+function resetComposerMode() {
+  const toggle = document.querySelector("#web-search-toggle");
+  if (toggle) toggle.checked = false;
+  updateComposerMode();
+}
+
+resetComposerMode();
+window.addEventListener("pageshow", resetComposerMode);
+
 async function loadThreads() {
   const payload = await api("/api/threads?limit=50");
   state.threads = payload.items || [];
@@ -77,11 +117,11 @@ async function sendMessage(event) {
   const input = document.querySelector("#composer-input");
   const content = input.value.trim();
   if (!content || state.sending) return;
-  if (!state.threadId) await createThread();
   state.sending = true;
-  document.querySelector("#send").disabled = true;
+  updateComposerMode();
   setBanner("");
   try {
+    if (!state.threadId) await createThread();
     await api(`/api/threads/${encodeURIComponent(state.threadId)}/messages`, {
       method: "POST",
       json: { request_id: requestId(), content },
@@ -97,7 +137,7 @@ async function sendMessage(event) {
     }
   } finally {
     state.sending = false;
-    document.querySelector("#send").disabled = false;
+    updateComposerMode();
     input.focus();
   }
 }
@@ -118,20 +158,7 @@ async function loadSettings() {
   document.querySelector("#personality").value = settings.system_prompt || "";
   document.querySelector("#timezone").value = settings.automation_timezone || "";
   document.querySelector("#job-zone").value = settings.automation_timezone || "UTC";
-  const label = settings.model ? `Message · ${settings.model}` : "Message · no model selected";
-  document.querySelector("#model-label").textContent = label;
-  const webBtn = document.querySelector("#research-web");
-  if (webBtn) {
-    if (status.outbound_enabled) {
-      webBtn.hidden = false;
-      webBtn.disabled = false;
-      webBtn.title = "";
-    } else {
-      webBtn.hidden = true;
-      webBtn.disabled = true;
-      webBtn.title = "Outbound is off";
-    }
-  }
+  updateComposerMode();
   renderPrivacy(document.querySelector("#privacy-list"), status);
 }
 
@@ -188,11 +215,10 @@ async function runTool(name, arguments_) {
 async function runResearch(question, mode = "closed") {
   const cleanQ = (question || "").trim();
   if (!cleanQ) return;
+  if (mode === "web" && !state.status?.outbound_enabled) return;
   setBanner("");
   const button = document.querySelector("#research-notes");
-  const webButton = document.querySelector("#research-web");
   if (button) button.disabled = true;
-  if (webButton) webButton.disabled = true;
   try {
     const run = await api("/api/tools/research/runs", {
       method: "POST",
@@ -214,8 +240,26 @@ async function runResearch(question, mode = "closed") {
     showError(error);
   } finally {
     if (button) button.disabled = false;
-    if (webButton && state.status?.outbound_enabled) webButton.disabled = false;
   }
+}
+
+async function submitComposer(event) {
+  event.preventDefault();
+  const input = document.querySelector("#composer-input");
+  const toggle = document.querySelector("#web-search-toggle");
+  const webMode = Boolean(toggle?.checked && !toggle.disabled && state.status?.outbound_enabled);
+  if (webMode) {
+    if (!input.value.trim() || state.sending) return;
+    state.sending = true;
+    updateComposerMode();
+    try {
+      return await runResearch(input.value, "web");
+    } finally {
+      state.sending = false;
+      updateComposerMode();
+    }
+  }
+  return sendMessage(event);
 }
 
 async function copyMarkdown(text, button) {
@@ -319,8 +363,10 @@ document.querySelector("#new-thread").addEventListener("click", () => {
 });
 
 document.querySelector("#composer").addEventListener("submit", (event) => {
-  sendMessage(event).catch(showError);
+  submitComposer(event).catch(showError);
 });
+
+document.querySelector("#web-search-toggle").addEventListener("change", updateComposerMode);
 
 document.querySelector("#composer-input").addEventListener("keydown", (event) => {
   if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -359,18 +405,6 @@ document.querySelector("#research-notes").addEventListener("click", () => {
   }
   runResearch(question, "closed").catch(showError);
 });
-
-const researchWebBtn = document.querySelector("#research-web");
-if (researchWebBtn) {
-  researchWebBtn.addEventListener("click", () => {
-    const question = document.querySelector("#ask-question").value.trim();
-    if (!question) {
-      document.querySelector("#ask-question").focus();
-      return;
-    }
-    runResearch(question, "web").catch(showError);
-  });
-}
 
 document.querySelector("#research-copy").addEventListener("click", (event) => {
   if (!state.currentResearchRun) return;

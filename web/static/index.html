@@ -80,7 +80,13 @@
       </section>
       <form id="composer" class="composer">
         <label id="model-label" for="composer-input" class="form-label">Message</label>
-        <textarea id="composer-input" class="form-control" rows="3" maxlength="32000" placeholder="Write a message"></textarea>
+        <div class="composer-controls">
+          <textarea id="composer-input" class="form-control" rows="3" maxlength="32000" placeholder="Write a message"></textarea>
+          <label class="composer-switch form-check form-switch" for="web-search-toggle">
+            <input id="web-search-toggle" class="form-check-input" type="checkbox" role="switch">
+            <span id="web-search-label" class="form-check-label">Web search</span>
+          </label>
+        </div>
         <button type="submit" id="send" class="btn btn-primary">Send</button>
       </form>
     </main>
@@ -120,7 +126,6 @@
           <div class="form-actions">
             <button type="submit" class="btn btn-primary btn-sm">Ask</button>
             <button type="button" id="research-notes" class="btn btn-outline-secondary btn-sm">Research notes</button>
-            <button type="button" id="research-web" class="btn btn-outline-secondary btn-sm" hidden disabled title="Outbound is off">Research web</button>
           </div>
         </form>
       </section>

@@ -47,7 +47,7 @@ def test_research_click_does_not_post_chat_messages() -> None:
     # Extract the runResearch function body to verify it does not call the chat messages route
     start = app_js.find("async function runResearch")
     assert start != -1
-    end = app_js.find("async function copyMarkdown", start)
+    end = app_js.find("async function submitComposer", start)
     assert end != -1
     run_research_code = app_js[start:end]
     assert "/api/tools/research/runs" in run_research_code
@@ -61,25 +61,51 @@ def test_research_click_does_not_post_chat_messages() -> None:
     assert "runResearch" in btn_listener
     assert "sendMessage" not in btn_listener
 
-    # Verify composer Send form is still dedicated to chat sendMessage
-    composer_listener = app_js[app_js.find('document.querySelector("#composer")') :]
-    assert "sendMessage" in composer_listener[:200]
-    assert "runResearch" not in composer_listener[:200]
+    # The composer dispatches to either chat or the web research worksheet.
+    submit_start = app_js.find("async function submitComposer")
+    assert submit_start != -1
+    submit_composer = app_js[submit_start : submit_start + 600]
+    assert 'runResearch(input.value, "web")' in submit_composer
+    assert "sendMessage(event)" in submit_composer
 
 
-def test_research_web_control_follows_outbound_status() -> None:
+def test_composer_web_search_switch_is_the_only_web_entrypoint() -> None:
     html = (STATIC / "index.html").read_text(encoding="utf-8")
-    control_start = html.find('id="research-web"')
-    assert control_start != -1
-    assert "hidden" in html[control_start : control_start + 180]
+    assert 'id="web-search-toggle"' in html
+    assert 'type="checkbox"' in html
+    assert "Web search" in html
+    assert 'id="research-web"' not in html
+    assert html.count('id="composer-input"') == 1
+    composer_start = html.find('<form id="composer"')
+    composer_end = html.find("</form>", composer_start)
+    composer = html[composer_start:composer_end]
+    assert composer_start != -1 and composer_end != -1
+    assert 'id="web-search-toggle"' in composer
+    assert 'id="web-search-toggle" checked' not in composer
+
+    memory_start = html.find('id="panel-memory"')
+    assert memory_start != -1
+    memory_end = html.find("</section>", memory_start)
+    assert 'id="research-web"' not in html[memory_start:memory_end]
 
     app_js = (STATIC / "app.js").read_text(encoding="utf-8")
-    start = app_js.find("async function loadSettings")
-    end = app_js.find("async function saveSettings", start)
-    assert start != -1 and end != -1
-    load_settings = app_js[start:end]
-    assert "if (status.outbound_enabled)" in load_settings
-    assert "webBtn.hidden = false" in load_settings
-    assert "webBtn.disabled = false" in load_settings
-    assert "webBtn.hidden = true" in load_settings
-    assert "webBtn.disabled = true" in load_settings
+    assert 'window.addEventListener("pageshow", resetComposerMode)' in app_js
+    assert "toggle.checked = false" in app_js
+    assert "toggle.hidden = true" in app_js
+    assert "toggle.disabled = true" in app_js
+
+    update_start = app_js.find("function updateComposerMode")
+    update_end = app_js.find("function resetComposerMode", update_start)
+    update_mode = app_js[update_start:update_end]
+    assert "state.status?.outbound_enabled" in update_mode
+    assert 'input.placeholder = webMode ? "Search the web" : "Write a message"' in update_mode
+    assert 'modelLabel.textContent = webMode ? "Search the web"' in update_mode
+
+    submit_start = app_js.find("async function submitComposer")
+    submit_end = app_js.find("async function copyMarkdown", submit_start)
+    submit_composer = app_js[submit_start:submit_end]
+    assert 'toggle?.checked' in submit_composer
+    assert 'state.status?.outbound_enabled' in submit_composer
+    assert 'runResearch(input.value, "web")' in submit_composer
+    assert "sendMessage(event)" in submit_composer
+    assert "researchWebBtn" not in app_js
