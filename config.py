@@ -46,7 +46,7 @@ BIND_HOST = os.getenv("MUTINY_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = int(os.getenv("MUTINY_PORT", "8765"))
 OLLAMA_API_BASE = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434").strip()
 AUTOMATION_TIMEZONE = os.getenv("AUTOMATION_TIMEZONE", "America/Chicago").strip() or "America/Chicago"
-OUTBOUND_ENABLED = os.getenv("MUTINY_OUTBOUND_ENABLED", "0").strip().lower() in {"1", "true", "yes"}
+OUTBOUND_ENABLED = os.getenv("MUTINY_OUTBOUND_ENABLED", "1").strip().lower() in {"1", "true", "yes"}
 MAX_HISTORY_MESSAGES = 12
 MAX_INPUT_CHARS = 32_000
 

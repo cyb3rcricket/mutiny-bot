@@ -22,12 +22,13 @@ Mutiny is a single-user localhost console for local Ollama chat, SQLite-backed t
 
 ## Run
 
-Python 3.11 or newer and a running local Ollama daemon are required.
+Docker Compose, Python 3.11 or newer, and a running local Ollama daemon are required.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+docker compose up -d
 python mutiny_bot.py
 ```
 
@@ -49,6 +50,7 @@ Copy `.env.example` to `.env` to override the port, database path, automation ti
 - Inference requests route solely to the configured loopback Ollama endpoint. Cloud model identifiers and remote endpoints are rejected.
 - Set `OLLAMA_NO_CLOUD=1` in the Ollama daemon's own service environment before launching it. Setting the variable inside this console process does not reconfigure an already running daemon.
 - Ordinary chat interactions do not invoke tools and cannot browse the public web.
+- Outbound web research defaults on for the bundled SearxNG service: SearxNG stays on the loopback port but queries the public web for explicit Research web actions. Set `MUTINY_OUTBOUND_ENABLED=0` to hide and disable web research while closed research remains available.
 - Outbound news monitoring is disabled. `requirements-news.txt` is not installed by default, and the dormant news monitor module in the codebase is neither scheduled nor exposed in the UI.
 - The web session relies on an HttpOnly cookie generated per process run. It is not an account system.
 - State-modifying requests require matching page Origin headers and the `X-Mutiny-Request` header. OpenAPI and documentation routes are disabled to prevent loading third-party CDNs.
@@ -77,13 +79,13 @@ These rules are the product. Features that break them do not ship.
 Research is an existing separate action in the Memory panel, also available at `/api/tools/research/runs`. It is never folded into ordinary `send_message`. The on-disk shape lives in [docs/research-run.md](docs/research-run.md).
 
 - Default Send stays local chat with `tools=None`.
-- Research off means today's privacy tests still pass.
+- Closed research remains available when outbound web research is off.
 - Closed research searches saved facts, memories, and local files under `MUTINY_DOCS_PATH` (default `./research_docs`).
-- Any later web retrieval requires an explicit opt-in (outbound flag and Research mode). It does not become the default path.
+- Web retrieval is available only from the explicit Research web action and `mode="web"`; set `MUTINY_OUTBOUND_ENABLED=0` for closed-only research and to hide that action.
 - A Research answer may only use excerpts attached to that run. If the corpus does not contain the fact, the run reports a gap instead of guessing.
 
 ### Research web mode (Phase 7)
-Web research is gated behind two locks: `MUTINY_OUTBOUND_ENABLED=1` in the environment and explicit `mode="web"` on that research run. Default Send stays local chat with `tools=None` and still cannot browse. When enabled, Mutiny queries only a local loopback SearxNG instance for snippets (no direct Google/Bing egress, no full-page crawls, no cloud writer). Citations in web mode may only retain URLs retrieved as sources for that turn; all other URLs are stripped.
+Web research is gated behind two locks: `MUTINY_OUTBOUND_ENABLED=1` in the environment and explicit `mode="web"` on that research run. The flag defaults to `1`; set it to `0` for closed-only research and to hide the web action. Default Send stays local chat with `tools=None` and still cannot browse. When enabled, Mutiny queries only the bundled loopback SearxNG instance, which can query the public web for snippets (no direct Google/Bing egress, no full-page crawls, no cloud writer). Citations in web mode may only retain URLs retrieved as sources for that turn; all other URLs are stripped.
 
 ## What you can do
 

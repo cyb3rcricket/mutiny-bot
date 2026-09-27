@@ -65,3 +65,21 @@ def test_research_click_does_not_post_chat_messages() -> None:
     composer_listener = app_js[app_js.find('document.querySelector("#composer")') :]
     assert "sendMessage" in composer_listener[:200]
     assert "runResearch" not in composer_listener[:200]
+
+
+def test_research_web_control_follows_outbound_status() -> None:
+    html = (STATIC / "index.html").read_text(encoding="utf-8")
+    control_start = html.find('id="research-web"')
+    assert control_start != -1
+    assert "hidden" in html[control_start : control_start + 180]
+
+    app_js = (STATIC / "app.js").read_text(encoding="utf-8")
+    start = app_js.find("async function loadSettings")
+    end = app_js.find("async function saveSettings", start)
+    assert start != -1 and end != -1
+    load_settings = app_js[start:end]
+    assert "if (status.outbound_enabled)" in load_settings
+    assert "webBtn.hidden = false" in load_settings
+    assert "webBtn.disabled = false" in load_settings
+    assert "webBtn.hidden = true" in load_settings
+    assert "webBtn.disabled = true" in load_settings

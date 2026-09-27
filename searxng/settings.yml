@@ -1,0 +1,12 @@
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json
+
+server:
+  bind_address: 0.0.0.0
+  limiter: false
+  public_instance: false
+  secret_key: "1SQLespU3u_G4SUuWZy-yNl4KkUxsOpJprGkI8yd1dtryf-JUZY2ewckECmag0An"

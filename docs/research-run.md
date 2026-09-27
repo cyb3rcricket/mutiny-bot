@@ -33,7 +33,7 @@ The input parameters and run metadata are stored in `runs.arguments_json`.
 
 Rules:
 - `mode` is `"closed"` | `"wiki"` | `"web"`.
-- Phase 7 implements `"web"` behind two locks: `MUTINY_OUTBOUND_ENABLED=1` AND `mode=="web"`.
+- Phase 7 implements `"web"` behind two locks: `MUTINY_OUTBOUND_ENABLED=1` AND `mode=="web"`. The outbound flag defaults to `1`; set it to `0` for closed-only research.
 - `"wiki"` is not implemented and must error.
 - `queries` = phrases actually used (may be `[]`).
 - `gaps` = strings naming what was not found.
@@ -72,7 +72,7 @@ Closed mode looks only at things already on this machine: saved facts, memories,
 
 Web mode retrieves live-web snippets through a local SearxNG instance on loopback (`MUTINY_SEARXNG_URL`, default `http://127.0.0.1:8080`).
 
-- **Two locks**: `MUTINY_OUTBOUND_ENABLED=1` in the environment AND `mode=="web"` on the research turn. If outbound is disabled, web runs fail immediately with zero network egress.
+- **Two locks**: `MUTINY_OUTBOUND_ENABLED=1` in the environment AND `mode=="web"` on the research turn. The outbound flag defaults to `1`; set it to `0` for closed-only research. If outbound is disabled, web runs fail immediately with zero network egress.
 - **Snippets only**: title, url, snippet/content. No full-page fetch, no JS rendering, no images. Mutiny does not query Google/Bing directly.
 - Only HTTP(S) result URLs with nonempty snippets become web sources; whitespace-only or invalid results are discarded, and stored snippets are capped at 2,000 characters.
 - **Pure web retrieval**: mode=web retrieves web snippets only and does not mix local facts/docs into the run.

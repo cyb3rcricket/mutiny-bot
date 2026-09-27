@@ -1,0 +1,11 @@
+services:
+  searxng:
+    image: searxng/searxng:latest
+    environment:
+      SEARXNG_BASE_URL: "http://127.0.0.1:8080/"
+      FORCE_OWNERSHIP: "false"
+      SEARXNG_SECRET: "1SQLespU3u_G4SUuWZy-yNl4KkUxsOpJprGkI8yd1dtryf-JUZY2ewckECmag0An"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - "./searxng/settings.yml:/etc/searxng/settings.yml:ro"

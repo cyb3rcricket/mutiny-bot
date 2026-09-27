@@ -560,9 +560,14 @@ class LocalDocumentResearchTests(unittest.IsolatedAsyncioTestCase):
         await db.setup_database()
         thread = await db.create_thread(title="Test thread")
         llm = FakeChatLLM()
-        reply = await send_message(
-            db, llm, thread_id=thread["id"], content="Hello chat", request_id="r1"
-        )
+        with patch.object(config, "OUTBOUND_ENABLED", True):
+            with patch(
+                "core.research.search_web",
+                new=AsyncMock(side_effect=AssertionError("ordinary chat called web research")),
+            ):
+                reply = await send_message(
+                    db, llm, thread_id=thread["id"], content="Hello chat", request_id="r1"
+                )
         self.assertEqual(
             reply["assistant_message"]["content"], "Chat reply without tools."
         )
